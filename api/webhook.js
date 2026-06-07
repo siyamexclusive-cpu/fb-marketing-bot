@@ -188,20 +188,30 @@ bot.action('status', async (ctx) => {
     ctx.answerCbQuery(`✅ এ পর্যন্ত ${session.data.length} টি Row সেভ হয়েছে!`, { show_alert: true });
 });
 
+// এই ফাংশনটি ফাইলের নিচের দিকে খুঁজুন এবং রিপ্লেস করুন
 async function exportData(ctx, format) {
     const { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', ctx.chat.id).single();
     if (!session.data || session.data.length === 0) return ctx.answerCbQuery('ফাঁকা শিট!', { show_alert: true });
 
     ctx.answerCbQuery('ফাইল তৈরি হচ্ছে...');
     try {
+        // নতুন লজিক: এক্সপোর্ট করার আগে ডাটাগুলোকে কলামের সঠিক সিরিয়ালে সাজানো
+        const orderedData = session.data.map(row => {
+            let newRow = {};
+            session.column_names.forEach(col => {
+                newRow[col] = row[col] || ''; // যদি কোনো কলাম ফাঁকা থাকে, তবে ফাঁকা স্ট্রিং বসবে
+            });
+            return newRow;
+        });
+
         if (format === 'xlsx') {
-            const ws = xlsx.utils.json_to_sheet(session.data);
+            const ws = xlsx.utils.json_to_sheet(orderedData, { header: session.column_names });
             const wb = xlsx.utils.book_new();
             xlsx.utils.book_append_sheet(wb, ws, 'FB_Data');
             const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
             await ctx.replyWithDocument({ source: buffer, filename: `FB_Data_${Date.now()}.xlsx` });
         } else if (format === 'txt') {
-            const txtData = session.data.map(row => session.column_names.map(col => row[col] || '').join('|')).join('\n');
+            const txtData = orderedData.map(row => session.column_names.map(col => row[col]).join('|')).join('\n');
             const buffer = Buffer.from(txtData, 'utf-8');
             await ctx.replyWithDocument({ source: buffer, filename: `FB_Data_${Date.now()}.txt` });
         }
