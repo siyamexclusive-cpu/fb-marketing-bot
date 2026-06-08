@@ -34,10 +34,10 @@ bot.command('start', async (ctx) => {
 
         const intro = `🌟 *স্বাগতম প্রো-লেভেল ডাটা এন্ট্রি বটে!* 🌟\n\n`
                     + `আমি আপনার কাজকে দ্রুত ও নির্ভুল করতে তৈরি।\n`
-                    + `🔹 ডুপ্লিকেট চেকার\n🔹 অটোমেটিক কলাম স্কিপ (পার্মানেন্ট)\n🔹 লাইভ এডিট ও আনডু\n🔹 TXT ও XLSX এক্সপোর্ট\n\n`
-                    + `👉 *شروع করতে আপনার শিটের কলামগুলোর নাম কমা (,) দিয়ে দিন:*\n📝 উদাহরণ: UID, Password, Cookies`;
+                    + `🔹 ডুপ্লিকেট চেকার\n🔹 অটোমেটিক কলাম স্কিপ (পার্মানেন্ট)\n🔹 লাইভ এডিট ও আনডু\n🔹 TXT ও XLSX এক্সপোর্ট\n`
+                    + `🔹 *নতুন:* ফেসবুক UID চেকার (/checkuid)\n\n`
+                    + `👉 *শুরু করতে আপনার শিটের কলামগুলোর নাম কমা (,) দিয়ে দিন:*\n📝 উদাহরণ: UID, Password, Cookies`;
         
-        // স্টার্ট মেসেজের নিচেও বাল্ক চেকার ইনলাইন বাটন যুক্ত করা হলো
         ctx.replyWithMarkdown(intro, Markup.inlineKeyboard([
             [Markup.button.callback('🔍 Bulk UID Check', 'bulk_uid_start')]
         ]));
@@ -62,7 +62,48 @@ bot.command('edit', async (ctx) => {
     ctx.reply(`🛠️ Row ${rowNum} এর কোন কলামটি এডিট করতে চান?`, Markup.inlineKeyboard(buttons));
 });
 
-// 🔥 ইনলাইন বাটনে ক্লিক করলে বাল্ক সেশন অ্যাক্টিভ হবে 🔥
+// 🔥 সিঙ্গেল UID চেকার (JSON আপডেট) 🔥
+bot.command('checkuid', async (ctx) => {
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply('⚠️ ব্যবহারবিধি: /checkuid <ফেইসবুক-UID>\nউদাহরণ: /checkuid 100012345678901');
+    
+    const uid = args[1].trim();
+    const waitMsg = await ctx.reply(`⏳ UID [ ${uid} ] চেক করা হচ্ছে...`);
+
+    try {
+        // redirect=false দিয়ে সরাসরি JSON ডাটা বের করা
+        const url = `https://graph.facebook.com/${uid}/picture?redirect=false`;
+        const response = await fetch(url);
+        const data = await response.json();
+
+        let statusText = '';
+        let adviceText = '';
+
+        if (data.error) {
+             statusText = `❌ *Blocked / Disabled / Not Found*`;
+             adviceText = `আইডিটি ডিজেবল বা ব্লক হয়ে গেছে। এটি আর কাজ করবে না।`;
+        } else if (data.data && data.data.url) {
+             statusText = `✅ *Active / Public*`;
+             adviceText = `আইডিটি সচল আছে এবং ব্যবহারযোগ্য মনে হচ্ছে।`;
+        } else {
+             statusText = `⚠️ *Unknown Status*`;
+             adviceText = `আইডিটির অবস্থা পরিষ্কার নয়।`;
+        }
+
+        await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, undefined, 
+            `🔍 *Facebook UID Check Result*\n\n` +
+            `👤 *UID:* \`${uid}\`\n` +
+            `📊 *Status:* ${statusText}\n\n` +
+            `💡 *Advice:* ${adviceText}\n` +
+            `🔗 [প্রোফাইল লিংক চেক করুন](https://www.facebook.com/${uid})`,
+            { parse_mode: 'Markdown', disable_web_page_preview: true }
+        );
+
+    } catch (error) {
+        await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, undefined, `❌ চেক করতে সমস্যা হয়েছে: ${error.message}`);
+    }
+});
+
 bot.action('bulk_uid_start', async (ctx) => {
     try {
         await supabase.from('bot_sessions').update({ step: 'WAITING_BULK_UID' }).eq('chat_id', ctx.chat.id);
@@ -83,11 +124,10 @@ bot.on('text', async (ctx) => {
         let { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', chatId).single();
         if (!session) return ctx.reply('অনুগ্রহ করে /start দিয়ে শুরু করুন।');
 
-        // 🔥 বাল্ক ইউআইডি চেকার প্রসেসিং লজিক 🔥
+        // 🔥 বাল্ক ইউআইডি চেকার (JSON আপডেট) 🔥
         if (session.step === 'WAITING_BULK_UID') {
             const lines = text.split('\n');
             const uids = lines.map(line => {
-                // পাইপ (|), কমা বা স্পেস দিয়ে আলাদা করা থাকলে শুধু প্রথম অংশ (UID) নেবে
                 const part = line.split(/[|,\s]+/)[0].trim();
                 return /^\d{5,18}$/.test(part) ? part : null;
             }).filter(Boolean);
@@ -99,12 +139,15 @@ bot.on('text', async (ctx) => {
             const waitMsg = await ctx.reply(`⏳ মোট ${uids.length}টি UID চেক করা হচ্ছে... অনুগ্রহ করে একটু অপেক্ষা করুন।`);
             let resultText = `🔍 *বাল্ক ইউআইডি চেকিং রেজাল্ট:*\n\n`;
 
-            // লুপ চালিয়ে প্রতিটি UID ওয়ান-বাই-ওয়ান চেক করা
             for (let i = 0; i < uids.length; i++) {
                 const uid = uids[i];
                 try {
-                    const response = await fetch(`https://graph.facebook.com/${uid}/picture?type=normal`, { redirect: 'manual' });
-                    if (response.status === 200 || response.status === 302) {
+                    const response = await fetch(`https://graph.facebook.com/${uid}/picture?redirect=false`);
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        resultText += `\`${uid}\`  ❌\n`;
+                    } else if (data.data && data.data.url) {
                         resultText += `\`${uid}\`  ✅\n`;
                     } else {
                         resultText += `\`${uid}\`  ❌\n`;
@@ -114,12 +157,11 @@ bot.on('text', async (ctx) => {
                 }
             }
 
-            // আগের সেশন রিকভারি লজিক (ডাটা এন্ট্রি ব্যাহত হবে না)
             const nextStep = session.column_names && session.column_names.length > 0 ? 'DATA_ENTRY' : 'WAITING_FOR_COLUMNS';
             await supabase.from('bot_sessions').update({ step: nextStep }).eq('chat_id', chatId);
 
             await ctx.telegram.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
-            return ctx.replyWithMarkdown(resultText + `\n💡 *চেকিং সম্পন্ন হয়েছে!* আপনার আগের ডাটা এন্ট্রি সেশনটি বহাল আছে। আপনি চাইলে পুনরায় ডাটা ইনপুট দেওয়া শুরু করতে পারেন।`);
+            return ctx.replyWithMarkdown(resultText + `\n💡 *চেকিং সম্পন্ন হয়েছে!* আপনার আগের ডাটা এন্ট্রি সেশনটি বহাল আছে।`);
         }
 
         if (session.step === 'WAITING_FOR_COLUMNS') {
@@ -186,7 +228,7 @@ bot.on('text', async (ctx) => {
                             inline_keyboard: [
                                 [{ text: '📊 Status', callback_data: 'status' }, { text: '↩️ Undo Last', callback_data: 'undo' }],
                                 [{ text: '💾 Save XLSX', callback_data: 'export_xlsx' }, { text: '📄 Save TXT', callback_data: 'export_txt' }],
-                                [{ text: '🔍 Bulk UID Check', callback_data: 'bulk_uid_start' }] // এখানেও ইনলাইন বাটন যোগ করা হলো
+                                [{ text: '🔍 Bulk UID Check', callback_data: 'bulk_uid_start' }]
                             ]
                         }
                     }
