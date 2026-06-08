@@ -35,9 +35,12 @@ bot.command('start', async (ctx) => {
         const intro = `🌟 *স্বাগতম প্রো-লেভেল ডাটা এন্ট্রি বটে!* 🌟\n\n`
                     + `আমি আপনার কাজকে দ্রুত ও নির্ভুল করতে তৈরি।\n`
                     + `🔹 ডুপ্লিকেট চেকার\n🔹 অটোমেটিক কলাম স্কিপ (পার্মানেন্ট)\n🔹 লাইভ এডিট ও আনডু\n🔹 TXT ও XLSX এক্সপোর্ট\n\n`
-                    + `👉 *শুরু করতে আপনার শিটের কলামগুলোর নাম কমা (,) দিয়ে দিন:*\n📝 উদাহরণ: UID, Password, Cookies`;
+                    + `👉 *شروع করতে আপনার শিটের কলামগুলোর নাম কমা (,) দিয়ে দিন:*\n📝 উদাহরণ: UID, Password, Cookies`;
         
-        ctx.replyWithMarkdown(intro);
+        // স্টার্ট মেসেজের নিচেও বাল্ক চেকার ইনলাইন বাটন যুক্ত করা হলো
+        ctx.replyWithMarkdown(intro, Markup.inlineKeyboard([
+            [Markup.button.callback('🔍 Bulk UID Check', 'bulk_uid_start')]
+        ]));
     } catch (e) {
         console.error("Start command error:", e);
     }
@@ -59,20 +62,72 @@ bot.command('edit', async (ctx) => {
     ctx.reply(`🛠️ Row ${rowNum} এর কোন কলামটি এডিট করতে চান?`, Markup.inlineKeyboard(buttons));
 });
 
+// 🔥 ইনলাইন বাটনে ক্লিক করলে বাল্ক সেশন অ্যাক্টিভ হবে 🔥
+bot.action('bulk_uid_start', async (ctx) => {
+    try {
+        await supabase.from('bot_sessions').update({ step: 'WAITING_BULK_UID' }).eq('chat_id', ctx.chat.id);
+        ctx.answerCbQuery().catch(()=>{});
+        ctx.reply('✍️ *একসাথে অনেকগুলো UID পেস্ট করে পাঠিয়ে দিন.*\n\n(আপনি প্রতি লাইনে একটি করে UID দিতে পারেন, অথবা পুরো আইডি লগ পেস্ট করে দিলেও আমি নিজে থেকে UID গুলো আলাদা করে নেব।)');
+    } catch (e) {
+        console.error(e);
+    }
+});
+
 bot.on('text', async (ctx) => {
     try {
         const chatId = ctx.chat.id;
         const text = ctx.message.text.trim();
 
+        if (text.startsWith('/')) return;
+
         let { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', chatId).single();
-        if (!session) return ctx.reply('অনুগ্রহ করে /start দিয়ে শুরু করুন।');
+        if (!session) return ctx.reply('অনুগ্রহ করে /start দিয়ে শুরু করুন।');
+
+        // 🔥 বাল্ক ইউআইডি চেকার প্রসেসিং লজিক 🔥
+        if (session.step === 'WAITING_BULK_UID') {
+            const lines = text.split('\n');
+            const uids = lines.map(line => {
+                // পাইপ (|), কমা বা স্পেস দিয়ে আলাদা করা থাকলে শুধু প্রথম অংশ (UID) নেবে
+                const part = line.split(/[|,\s]+/)[0].trim();
+                return /^\d{5,18}$/.test(part) ? part : null;
+            }).filter(Boolean);
+
+            if (uids.length === 0) {
+                return ctx.reply('❌ কোনো বৈধ ফেসবুক ইউআইডি (UID) পাওয়া যায়নি! দয়া করে সঠিক নম্বরের লিস্ট দিন।');
+            }
+
+            const waitMsg = await ctx.reply(`⏳ মোট ${uids.length}টি UID চেক করা হচ্ছে... অনুগ্রহ করে একটু অপেক্ষা করুন।`);
+            let resultText = `🔍 *বাল্ক ইউআইডি চেকিং রেজাল্ট:*\n\n`;
+
+            // লুপ চালিয়ে প্রতিটি UID ওয়ান-বাই-ওয়ান চেক করা
+            for (let i = 0; i < uids.length; i++) {
+                const uid = uids[i];
+                try {
+                    const response = await fetch(`https://graph.facebook.com/${uid}/picture?type=normal`, { redirect: 'manual' });
+                    if (response.status === 200 || response.status === 302) {
+                        resultText += `\`${uid}\`  ✅\n`;
+                    } else {
+                        resultText += `\`${uid}\`  ❌\n`;
+                    }
+                } catch (err) {
+                    resultText += `\`${uid}\`  ❌\n`;
+                }
+            }
+
+            // আগের সেশন রিকভারি লজিক (ডাটা এন্ট্রি ব্যাহত হবে না)
+            const nextStep = session.column_names && session.column_names.length > 0 ? 'DATA_ENTRY' : 'WAITING_FOR_COLUMNS';
+            await supabase.from('bot_sessions').update({ step: nextStep }).eq('chat_id', chatId);
+
+            await ctx.telegram.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
+            return ctx.replyWithMarkdown(resultText + `\n💡 *চেকিং সম্পন্ন হয়েছে!* আপনার আগের ডাটা এন্ট্রি সেশনটি বহাল আছে। আপনি চাইলে পুনরায় ডাটা ইনপুট দেওয়া শুরু করতে পারেন।`);
+        }
 
         if (session.step === 'WAITING_FOR_COLUMNS') {
             const cols = text.split(',').map(c => c.trim()).filter(c => c.length > 0);
             await supabase.from('bot_sessions').update({ column_names: cols, step: 'ASK_PERMANENT_CHOICE' }).eq('chat_id', chatId);
             
             const buttons = cols.map(col => [Markup.button.callback(`📌 ${col} পার্মানেন্ট করুন`, `make_perm_${col}`)]);
-            buttons.push([Markup.button.callback('⏭️ কোনোটিই নয় (ডাটা এন্ট্রি শুরু)', 'skip_permanent')]);
+            buttons.push([Markup.button.callback('⏭️ কোনোটিই নয় (ডাটা এন্ট্রি শুরু)', 'skip_permanent')]);
             return ctx.reply('✨ কলাম সেটআপ সফল! কোনো ভ্যালু কি পার্মানেন্ট করতে চান?', Markup.inlineKeyboard(buttons));
         }
 
@@ -84,7 +139,7 @@ bot.on('text', async (ctx) => {
             
             const buttons = session.column_names.map(col => [Markup.button.callback(session.permanent_settings[col] ? `✅ ${col} (${session.permanent_settings[col]})` : `📌 ${col} পার্মানেন্ট করুন`, `make_perm_${col}`)]);
             buttons.push([Markup.button.callback('🚀 ডাটা এন্ট্রি শুরু করুন', 'skip_permanent')]);
-            return ctx.reply(`✅ ${colName} পার্মানেন্ট হয়েছে। আর কিছু সেট করবেন?`, Markup.inlineKeyboard(buttons));
+            return ctx.reply(`✅ ${colName} পার্মানেন্ট হয়েছে। আর কিছু সেট করবেন?`, Markup.inlineKeyboard(buttons));
         }
 
         if (session.step === 'WAITING_EDIT_VAL') {
@@ -93,7 +148,7 @@ bot.on('text', async (ctx) => {
             session.data[rowIdx][colName] = text;
 
             await supabase.from('bot_sessions').update({ data: session.data, step: 'DATA_ENTRY', edit_target: {} }).eq('chat_id', chatId);
-            return ctx.reply(`✅ Row ${session.edit_target.row} এর [ ${colName} ] সফলভাবে আপডেট হয়েছে! পরবর্তী সাধারণ ইনপুট দিন।`);
+            return ctx.reply(`✅ Row ${session.edit_target.row} এর [ ${colName} ] সফলভাবে আপডেট হয়েছে! পরবর্তী সাধারণ ইনপুট দিন।`);
         }
 
         if (session.step === 'DATA_ENTRY') {
@@ -102,7 +157,7 @@ bot.on('text', async (ctx) => {
 
             if (session.current_column_idx === 0) {
                 const isDuplicate = session.data.some(row => row[colName] === text);
-                if (isDuplicate) return ctx.reply(`⚠️ এই [ ${colName} ] আগেই প্রবেশ করানো হয়েছে! নতুন একটি দিন।`);
+                if (isDuplicate) return ctx.reply(`⚠️ এই [ ${colName} ] আগেই প্রবেশ করানো হয়েছে! নতুন একটি দিন।`);
             }
             
             session.current_row_data[colName] = text;
@@ -124,13 +179,14 @@ bot.on('text', async (ctx) => {
 
                 const nextCol = cols[session.current_column_idx];
                 return ctx.reply(
-                    `✅ *Row ${rowCount} সেভ হয়েছে!*\n💡 _ভুল হলে এডিট করতে টাইপ করুন: /edit ${rowCount}_\n\n👉 *পরবর্তী Row এর জন্য [ ${nextCol} ] দিন:*`,
+                    `✅ *Row ${rowCount} সেভ হয়েছে!*\n💡 _ভুল হলে এডিট করতে টাইপ করুন: /edit ${rowCount}_\n\n👉 *পরবর্তী Row এর জন্য [ ${nextCol} ] দিন:*`,
                     {
                         parse_mode: 'Markdown',
                         reply_markup: {
                             inline_keyboard: [
                                 [{ text: '📊 Status', callback_data: 'status' }, { text: '↩️ Undo Last', callback_data: 'undo' }],
-                                [{ text: '💾 Save XLSX', callback_data: 'export_xlsx' }, { text: '📄 Save TXT', callback_data: 'export_txt' }]
+                                [{ text: '💾 Save XLSX', callback_data: 'export_xlsx' }, { text: '📄 Save TXT', callback_data: 'export_txt' }],
+                                [{ text: '🔍 Bulk UID Check', callback_data: 'bulk_uid_start' }] // এখানেও ইনলাইন বাটন যোগ করা হলো
                             ]
                         }
                     }
@@ -179,27 +235,25 @@ bot.action('undo', async (ctx) => {
     session = moveToNextColumn(session);
     
     await supabase.from('bot_sessions').update({ data: session.data, current_column_idx: session.current_column_idx, current_row_data: session.current_row_data }).eq('chat_id', ctx.chat.id);
-    ctx.answerCbQuery('শেষ এন্ট্রি মুছে ফেলা হয়েছে!');
-    ctx.reply(`🗑️ সর্বশেষ Row মুছে ফেলা হয়েছে। বর্তমানে ${session.data.length} টি Row আছে।\n\n👉 আবার [ ${session.column_names[session.current_column_idx]} ] দিন:`);
+    ctx.answerCbQuery('শেষ এন্ট্রি মুছে ফেলা হয়েছে!');
+    ctx.reply(`🗑️ সর্বশেষ Row মুছে ফেলা হয়েছে। বর্তমানে ${session.data.length} টি Row আছে।\n\n👉 আবার [ ${session.column_names[session.current_column_idx]} ] দিন:`);
 });
 
 bot.action('status', async (ctx) => {
     const { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', ctx.chat.id).single();
-    ctx.answerCbQuery(`✅ এ পর্যন্ত ${session.data.length} টি Row সেভ হয়েছে!`, { show_alert: true });
+    ctx.answerCbQuery(`✅ এ পর্যন্ত ${session.data.length} টি Row সেভ হয়েছে!`, { show_alert: true });
 });
 
-// এই ফাংশনটি ফাইলের নিচের দিকে খুঁজুন এবং রিপ্লেস করুন
 async function exportData(ctx, format) {
     const { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', ctx.chat.id).single();
     if (!session.data || session.data.length === 0) return ctx.answerCbQuery('ফাঁকা শিট!', { show_alert: true });
 
     ctx.answerCbQuery('ফাইল তৈরি হচ্ছে...');
     try {
-        // নতুন লজিক: এক্সপোর্ট করার আগে ডাটাগুলোকে কলামের সঠিক সিরিয়ালে সাজানো
         const orderedData = session.data.map(row => {
             let newRow = {};
             session.column_names.forEach(col => {
-                newRow[col] = row[col] || ''; // যদি কোনো কলাম ফাঁকা থাকে, তবে ফাঁকা স্ট্রিং বসবে
+                newRow[col] = row[col] || ''; 
             });
             return newRow;
         });
@@ -216,9 +270,9 @@ async function exportData(ctx, format) {
             await ctx.replyWithDocument({ source: buffer, filename: `FB_Data_${Date.now()}.txt` });
         }
         await supabase.from('bot_sessions').delete().eq('chat_id', ctx.chat.id);
-        ctx.reply('🎉 ডাটা এক্সপোর্ট হয়েছে এবং মেমোরি ক্লিয়ার করা হয়েছে। নতুন কাজ করতে /start দিন।');
+        ctx.reply('🎉 ডাটা এক্সপোর্ট হয়েছে এবং মেমোরি ক্লিয়ার করা হয়েছে। নতুন কাজ করতে /start দিন।');
     } catch (e) {
-        ctx.reply('❌ এরর হয়েছে!');
+        ctx.reply('❌ এরর হয়েছে!');
     }
 }
 
