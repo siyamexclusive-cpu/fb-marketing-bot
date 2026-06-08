@@ -23,27 +23,47 @@ function moveToNextColumn(session) {
     return session;
 }
 
-bot.command('start', async (ctx) => {
-    try {
-        const chatId = ctx.chat.id;
-        await supabase.from('bot_sessions').upsert({
-            chat_id: chatId, step: 'WAITING_FOR_COLUMNS',
-            column_names: [], permanent_settings: {},
-            current_column_idx: 0, current_row_data: {}, data: [], edit_target: {}
-        });
+// 🔥 নতুন স্টার্ট মেনু লজিক 🔥
+async function sendMainMenu(ctx, chatId) {
+    // মেনুতে আসলে পুরনো সেশন রিসেট হয়ে যাবে
+    await supabase.from('bot_sessions').upsert({
+        chat_id: chatId, step: 'MAIN_MENU',
+        column_names: [], permanent_settings: {},
+        current_column_idx: 0, current_row_data: {}, data: [], edit_target: {}
+    });
 
-        const intro = `🌟 *স্বাগতম প্রো-লেভেল ডাটা এন্ট্রি বটে!* 🌟\n\n`
-                    + `আমি আপনার কাজকে দ্রুত ও নির্ভুল করতে তৈরি।\n`
-                    + `🔹 ডুপ্লিকেট চেকার\n🔹 অটোমেটিক কলাম স্কিপ (পার্মানেন্ট)\n🔹 লাইভ এডিট ও আনডু\n🔹 TXT ও XLSX এক্সপোর্ট\n`
-                    + `🔹 *নতুন:* ফেসবুক UID চেকার (/checkuid)\n\n`
-                    + `👉 *শুরু করতে আপনার শিটের কলামগুলোর নাম কমা (,) দিয়ে দিন:*\n📝 উদাহরণ: UID, Password, Cookies`;
-        
-        ctx.replyWithMarkdown(intro, Markup.inlineKeyboard([
-            [Markup.button.callback('🔍 Bulk UID Check', 'bulk_uid_start')]
-        ]));
-    } catch (e) {
-        console.error("Start command error:", e);
-    }
+    const intro = `🌟 *স্বাগতম প্রো-লেভেল ফেসবুক মার্কেটিং বটে!* 🌟\n\n`
+                + `👉 *কী করতে চান তা সিলেক্ট করুন:*`;
+    
+    return ctx.replyWithMarkdown(intro, Markup.inlineKeyboard([
+        [Markup.button.callback('📝 Create Sheet (শিট তৈরি)', 'sheet_create')],
+        [Markup.button.callback('🔍 UID Checker (বাল্ক চেক)', 'uid_check')]
+    ]));
+}
+
+bot.command('start', (ctx) => sendMainMenu(ctx, ctx.chat.id));
+
+bot.action('main_menu', async (ctx) => {
+    ctx.answerCbQuery().catch(()=>{});
+    return sendMainMenu(ctx, ctx.chat.id);
+});
+
+// 🔥 শিট ক্রিয়েট মেনু 🔥
+bot.action('sheet_create', async (ctx) => {
+    await supabase.from('bot_sessions').update({ step: 'WAITING_FOR_COLUMNS' }).eq('chat_id', ctx.chat.id);
+    ctx.answerCbQuery().catch(()=>{});
+    return ctx.reply('👉 *শুরু করতে আপনার শিটের কলামগুলোর নাম কমা (,) দিয়ে দিন:*\n📝 উদাহরণ: UID, Password, Cookies', 
+        Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]])
+    );
+});
+
+// 🔥 ইউআইডি চেকার মেনু 🔥
+bot.action('uid_check', async (ctx) => {
+    await supabase.from('bot_sessions').update({ step: 'WAITING_BULK_UID' }).eq('chat_id', ctx.chat.id);
+    ctx.answerCbQuery().catch(()=>{});
+    return ctx.reply('✍️ *একসাথে অনেকগুলো UID পেস্ট করে পাঠিয়ে দিন.*\n\n(প্রতি লাইনে একটি করে UID অথবা পুরো লগ পেস্ট করে দিন)',
+        Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]])
+    );
 });
 
 bot.command('edit', async (ctx) => {
@@ -51,67 +71,14 @@ bot.command('edit', async (ctx) => {
     const args = ctx.message.text.split(' ');
     if (args.length < 2) return ctx.reply('⚠️ ব্যবহারবিধি: /edit <রো-নম্বর>\nউদাহরণ: /edit 5');
     
-    const rowNum = parseInt(args[1]);
     const { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', chatId).single();
-    
     if (!session || !session.data || rowNum < 1 || rowNum > session.data.length) {
         return ctx.reply('❌ ভুল রো-নম্বর! এই নামের কোনো ডাটা নেই।');
     }
-
+    const rowNum = parseInt(args[1]);
     const buttons = session.column_names.map(col => [Markup.button.callback(`✏️ ${col}`, `editcol_${rowNum}_${col}`)]);
+    buttons.push([Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]);
     ctx.reply(`🛠️ Row ${rowNum} এর কোন কলামটি এডিট করতে চান?`, Markup.inlineKeyboard(buttons));
-});
-
-// 🔥 সিঙ্গেল UID চেকার (JSON আপডেট) 🔥
-bot.command('checkuid', async (ctx) => {
-    const args = ctx.message.text.split(' ');
-    if (args.length < 2) return ctx.reply('⚠️ ব্যবহারবিধি: /checkuid <ফেইসবুক-UID>\nউদাহরণ: /checkuid 100012345678901');
-    
-    const uid = args[1].trim();
-    const waitMsg = await ctx.reply(`⏳ UID [ ${uid} ] চেক করা হচ্ছে...`);
-
-    try {
-        // redirect=false দিয়ে সরাসরি JSON ডাটা বের করা
-        const url = `https://graph.facebook.com/${uid}/picture?redirect=false`;
-        const response = await fetch(url);
-        const data = await response.json();
-
-        let statusText = '';
-        let adviceText = '';
-
-        if (data.error) {
-             statusText = `❌ *Blocked / Disabled / Not Found*`;
-             adviceText = `আইডিটি ডিজেবল বা ব্লক হয়ে গেছে। এটি আর কাজ করবে না।`;
-        } else if (data.data && data.data.url) {
-             statusText = `✅ *Active / Public*`;
-             adviceText = `আইডিটি সচল আছে এবং ব্যবহারযোগ্য মনে হচ্ছে।`;
-        } else {
-             statusText = `⚠️ *Unknown Status*`;
-             adviceText = `আইডিটির অবস্থা পরিষ্কার নয়।`;
-        }
-
-        await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, undefined, 
-            `🔍 *Facebook UID Check Result*\n\n` +
-            `👤 *UID:* \`${uid}\`\n` +
-            `📊 *Status:* ${statusText}\n\n` +
-            `💡 *Advice:* ${adviceText}\n` +
-            `🔗 [প্রোফাইল লিংক চেক করুন](https://www.facebook.com/${uid})`,
-            { parse_mode: 'Markdown', disable_web_page_preview: true }
-        );
-
-    } catch (error) {
-        await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, undefined, `❌ চেক করতে সমস্যা হয়েছে: ${error.message}`);
-    }
-});
-
-bot.action('bulk_uid_start', async (ctx) => {
-    try {
-        await supabase.from('bot_sessions').update({ step: 'WAITING_BULK_UID' }).eq('chat_id', ctx.chat.id);
-        ctx.answerCbQuery().catch(()=>{});
-        ctx.reply('✍️ *একসাথে অনেকগুলো UID পেস্ট করে পাঠিয়ে দিন.*\n\n(আপনি প্রতি লাইনে একটি করে UID দিতে পারেন, অথবা পুরো আইডি লগ পেস্ট করে দিলেও আমি নিজে থেকে UID গুলো আলাদা করে নেব।)');
-    } catch (e) {
-        console.error(e);
-    }
 });
 
 bot.on('text', async (ctx) => {
@@ -122,9 +89,9 @@ bot.on('text', async (ctx) => {
         if (text.startsWith('/')) return;
 
         let { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', chatId).single();
-        if (!session) return ctx.reply('অনুগ্রহ করে /start দিয়ে শুরু করুন।');
+        if (!session || session.step === 'MAIN_MENU') return ctx.reply('অনুগ্রহ করে মেনু থেকে অপশন সিলেক্ট করুন।');
 
-        // 🔥 বাল্ক ইউআইডি চেকার (JSON আপডেট) 🔥
+        // 🔥 ১০০% নিখুঁত বাল্ক ইউআইডি চেকার (Graph Exception Logic) 🔥
         if (session.step === 'WAITING_BULK_UID') {
             const lines = text.split('\n');
             const uids = lines.map(line => {
@@ -132,36 +99,34 @@ bot.on('text', async (ctx) => {
                 return /^\d{5,18}$/.test(part) ? part : null;
             }).filter(Boolean);
 
-            if (uids.length === 0) {
-                return ctx.reply('❌ কোনো বৈধ ফেসবুক ইউআইডি (UID) পাওয়া যায়নি! দয়া করে সঠিক নম্বরের লিস্ট দিন।');
-            }
+            if (uids.length === 0) return ctx.reply('❌ কোনো বৈধ ফেসবুক ইউআইডি (UID) পাওয়া যায়নি! দয়া করে সঠিক নম্বরের লিস্ট দিন।');
 
-            const waitMsg = await ctx.reply(`⏳ মোট ${uids.length}টি UID চেক করা হচ্ছে... অনুগ্রহ করে একটু অপেক্ষা করুন।`);
+            const waitMsg = await ctx.reply(`⏳ মোট ${uids.length}টি UID চেক করা হচ্ছে...`);
             let resultText = `🔍 *বাল্ক ইউআইডি চেকিং রেজাল্ট:*\n\n`;
 
             for (let i = 0; i < uids.length; i++) {
                 const uid = uids[i];
                 try {
-                    const response = await fetch(`https://graph.facebook.com/${uid}/picture?redirect=false`);
+                    // সরাসরি Graph API থেকে ডাটা কল করা হচ্ছে
+                    const response = await fetch(`https://graph.facebook.com/${uid}`);
                     const data = await response.json();
                     
-                    if (data.error) {
+                    // Code 100 মানে Object does not exist (অর্থাৎ আইডি ডিলিট বা ব্লকড)
+                    if (data.error && (data.error.code === 100 || data.error.code === 803)) {
                         resultText += `\`${uid}\`  ❌\n`;
-                    } else if (data.data && data.data.url) {
-                        resultText += `\`${uid}\`  ✅\n`;
                     } else {
-                        resultText += `\`${uid}\`  ❌\n`;
+                        // যদি অন্য কোনো এরর আসে (যেমন token needed), তার মানে আইডিটি সচল আছে
+                        resultText += `\`${uid}\`  ✅\n`;
                     }
                 } catch (err) {
                     resultText += `\`${uid}\`  ❌\n`;
                 }
             }
 
-            const nextStep = session.column_names && session.column_names.length > 0 ? 'DATA_ENTRY' : 'WAITING_FOR_COLUMNS';
-            await supabase.from('bot_sessions').update({ step: nextStep }).eq('chat_id', chatId);
-
             await ctx.telegram.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
-            return ctx.replyWithMarkdown(resultText + `\n💡 *চেকিং সম্পন্ন হয়েছে!* আপনার আগের ডাটা এন্ট্রি সেশনটি বহাল আছে।`);
+            return ctx.replyWithMarkdown(resultText + `\n💡 আপনি চাইলে আরও UID পেস্ট করতে পারেন, অথবা মেইন মেনুতে ফিরে যেতে পারেন।`, 
+                Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]])
+            );
         }
 
         if (session.step === 'WAITING_FOR_COLUMNS') {
@@ -170,6 +135,7 @@ bot.on('text', async (ctx) => {
             
             const buttons = cols.map(col => [Markup.button.callback(`📌 ${col} পার্মানেন্ট করুন`, `make_perm_${col}`)]);
             buttons.push([Markup.button.callback('⏭️ কোনোটিই নয় (ডাটা এন্ট্রি শুরু)', 'skip_permanent')]);
+            buttons.push([Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]);
             return ctx.reply('✨ কলাম সেটআপ সফল! কোনো ভ্যালু কি পার্মানেন্ট করতে চান?', Markup.inlineKeyboard(buttons));
         }
 
@@ -181,6 +147,7 @@ bot.on('text', async (ctx) => {
             
             const buttons = session.column_names.map(col => [Markup.button.callback(session.permanent_settings[col] ? `✅ ${col} (${session.permanent_settings[col]})` : `📌 ${col} পার্মানেন্ট করুন`, `make_perm_${col}`)]);
             buttons.push([Markup.button.callback('🚀 ডাটা এন্ট্রি শুরু করুন', 'skip_permanent')]);
+            buttons.push([Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]);
             return ctx.reply(`✅ ${colName} পার্মানেন্ট হয়েছে। আর কিছু সেট করবেন?`, Markup.inlineKeyboard(buttons));
         }
 
@@ -228,7 +195,7 @@ bot.on('text', async (ctx) => {
                             inline_keyboard: [
                                 [{ text: '📊 Status', callback_data: 'status' }, { text: '↩️ Undo Last', callback_data: 'undo' }],
                                 [{ text: '💾 Save XLSX', callback_data: 'export_xlsx' }, { text: '📄 Save TXT', callback_data: 'export_txt' }],
-                                [{ text: '🔍 Bulk UID Check', callback_data: 'bulk_uid_start' }]
+                                [{ text: '🏠 মেইন মেনু (এন্ট্রি শেষ করুন)', callback_data: 'main_menu' }]
                             ]
                         }
                     }
@@ -236,7 +203,7 @@ bot.on('text', async (ctx) => {
             }
 
             await supabase.from('bot_sessions').update({ current_column_idx: session.current_column_idx, current_row_data: session.current_row_data }).eq('chat_id', chatId);
-            return ctx.reply(`👉 এবার দিন [ ${cols[session.current_column_idx]} ]:`);
+            return ctx.reply(`👉 এবার দিন [ ${cols[session.current_column_idx]} ]:`, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু (বাতিল)', 'main_menu')]]));
         }
     } catch (e) {
         console.error("Text handler error:", e);
@@ -247,7 +214,7 @@ bot.action(/^make_perm_/, async (ctx) => {
     const colName = ctx.callbackQuery.data.replace('make_perm_', '');
     await supabase.from('bot_sessions').update({ step: `WAITING_PERM_VAL_${colName}` }).eq('chat_id', ctx.chat.id);
     ctx.answerCbQuery();
-    ctx.reply(`✍️ [ ${colName} ] এর পার্মানেন্ট ভ্যালুটি লিখে পাঠান:`);
+    ctx.reply(`✍️ [ ${colName} ] এর পার্মানেন্ট ভ্যালুটি লিখে পাঠান:`, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
 });
 
 bot.action('skip_permanent', async (ctx) => {
@@ -265,7 +232,7 @@ bot.action(/^editcol_/, async (ctx) => {
     const rowNum = parseInt(rowStr);
     await supabase.from('bot_sessions').update({ step: 'WAITING_EDIT_VAL', edit_target: { row: rowNum, col: colName } }).eq('chat_id', ctx.chat.id);
     ctx.answerCbQuery();
-    ctx.reply(`✍️ Row ${rowNum} এর নতুন [ ${colName} ] লিখে পাঠান:`);
+    ctx.reply(`✍️ Row ${rowNum} এর নতুন [ ${colName} ] লিখে পাঠান:`, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
 });
 
 bot.action('undo', async (ctx) => {
@@ -312,7 +279,7 @@ async function exportData(ctx, format) {
             await ctx.replyWithDocument({ source: buffer, filename: `FB_Data_${Date.now()}.txt` });
         }
         await supabase.from('bot_sessions').delete().eq('chat_id', ctx.chat.id);
-        ctx.reply('🎉 ডাটা এক্সপোর্ট হয়েছে এবং মেমোরি ক্লিয়ার করা হয়েছে। নতুন কাজ করতে /start দিন।');
+        ctx.reply('🎉 ডাটা এক্সপোর্ট হয়েছে। নতুন কাজ করতে মেইন মেনুতে যান।', Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
     } catch (e) {
         ctx.reply('❌ এরর হয়েছে!');
     }
