@@ -23,9 +23,8 @@ function moveToNextColumn(session) {
     return session;
 }
 
-// 🔥 নতুন মেইন মেনু লজিক 🔥
+// 🔥 মেইন মেনু লজিক 🔥
 async function sendMainMenu(ctx, chatId) {
-    // মেনুতে আসলে পুরনো সেশন এবং ডাটা রিসেট হয়ে যাবে
     await supabase.from('bot_sessions').upsert({
         chat_id: chatId, step: 'MAIN_MENU',
         column_names: [], permanent_settings: {},
@@ -49,7 +48,6 @@ bot.action('main_menu', async (ctx) => {
     return sendMainMenu(ctx, ctx.chat.id);
 });
 
-// 🔥 শিট ক্রিয়েট মেনু 🔥
 bot.action('sheet_create', async (ctx) => {
     await supabase.from('bot_sessions').update({ step: 'WAITING_FOR_COLUMNS' }).eq('chat_id', ctx.chat.id);
     ctx.answerCbQuery().catch(()=>{});
@@ -58,7 +56,6 @@ bot.action('sheet_create', async (ctx) => {
     );
 });
 
-// 🔥 ইউআইডি চেকার মেনু 🔥
 bot.action('uid_check', async (ctx) => {
     await supabase.from('bot_sessions').update({ step: 'WAITING_BULK_UID' }).eq('chat_id', ctx.chat.id);
     ctx.answerCbQuery().catch(()=>{});
@@ -67,7 +64,7 @@ bot.action('uid_check', async (ctx) => {
     );
 });
 
-// 🔥 সিঙ্গেল UID চেকার কমান্ড (মেনু ছাড়াও কাজ করবে) 🔥
+// 🔥 সিঙ্গেল UID চেকার (Web Scraper Method) 🔥
 bot.command('checkuid', async (ctx) => {
     const args = ctx.message.text.split(' ');
     if (args.length < 2) return ctx.reply('⚠️ ব্যবহারবিধি: /checkuid <ফেইসবুক-UID>\nউদাহরণ: /checkuid 100012345678901');
@@ -76,33 +73,30 @@ bot.command('checkuid', async (ctx) => {
     const waitMsg = await ctx.reply(`⏳ UID [ ${uid} ] চেক করা হচ্ছে...`);
 
     try {
-        const url = `https://graph.facebook.com/${uid}/picture?redirect=false`;
-        const response = await fetch(url);
-        const data = await response.json();
+        const response = await fetch(`https://www.facebook.com/${uid}`, {
+            method: 'GET',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml',
+                'Accept-Language': 'en-US,en;q=0.5'
+            }
+        });
+        const html = await response.text();
 
         let statusText = '';
-        let adviceText = '';
-
-        if (data.error) {
-             statusText = `❌ *Blocked / Not Found*`;
-             adviceText = `আইডিটি ডিলিট বা সম্পূর্ণ ব্লক হয়ে গেছে।`;
-        } else if (data.data) {
-             statusText = `✅ *Active*`;
-             adviceText = `আইডিটি সচল আছে।`;
+        if (response.status === 404 || html.includes("isn't available right now") || html.includes("page isn't available")) {
+             statusText = `❌ *Blocked / Disabled*`;
         } else {
-             statusText = `⚠️ *Unknown*`;
-             adviceText = `অবস্থা পরিষ্কার নয়।`;
+             statusText = `✅ *Active*`;
         }
 
         await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, undefined, 
             `🔍 *Facebook UID Result*\n\n` +
             `👤 *UID:* \`${uid}\`\n` +
             `📊 *Status:* ${statusText}\n\n` +
-            `💡 *Advice:* ${adviceText}\n` +
             `🔗 [প্রোফাইল লিংক](https://www.facebook.com/${uid})`,
             { parse_mode: 'Markdown', disable_web_page_preview: true }
         );
-
     } catch (error) {
         await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, undefined, `❌ চেক করতে সমস্যা হয়েছে: ${error.message}`);
     }
@@ -135,7 +129,7 @@ bot.on('text', async (ctx) => {
             return ctx.reply('⚠️ অনুগ্রহ করে উপরের মেনু থেকে একটি অপশন সিলেক্ট করুন।');
         }
 
-        // 🔥 ১০০% নিখুঁত বাল্ক ইউআইডি চেকার (শুধু Error চেক করবে) 🔥
+        // 🔥 বাল্ক ইউআইডি চেকার (Web Scraper Method - check.fb.tools এর মতো) 🔥
         if (session.step === 'WAITING_BULK_UID') {
             const lines = text.split('\n');
             const uids = lines.map(line => {
@@ -151,16 +145,21 @@ bot.on('text', async (ctx) => {
             for (let i = 0; i < uids.length; i++) {
                 const uid = uids[i];
                 try {
-                    const response = await fetch(`https://graph.facebook.com/${uid}/picture?redirect=false`);
-                    const data = await response.json();
+                    const response = await fetch(`https://www.facebook.com/${uid}`, {
+                        method: 'GET',
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Accept': 'text/html,application/xhtml+xml',
+                            'Accept-Language': 'en-US,en;q=0.5'
+                        }
+                    });
+                    const html = await response.text();
                     
-                    // আসল লজিক: সার্ভার Error দিলে ব্লক, Data দিলে অ্যাক্টিভ
-                    if (data.error) {
+                    // ৪MD স্ট্যাটাস বা নির্দিষ্ট টেক্সট পেলে ❌, নাহলে ✅
+                    if (response.status === 404 || html.includes("isn't available right now") || html.includes("page isn't available")) {
                         resultText += `\`${uid}\`  ❌\n`;
-                    } else if (data.data) {
-                        resultText += `\`${uid}\`  ✅\n`;
                     } else {
-                        resultText += `\`${uid}\`  ❌\n`;
+                        resultText += `\`${uid}\`  ✅\n`;
                     }
                 } catch (err) {
                     resultText += `\`${uid}\`  ❌\n`;
@@ -324,7 +323,6 @@ async function exportData(ctx, format) {
         }
         await supabase.from('bot_sessions').delete().eq('chat_id', ctx.chat.id);
         
-        // এক্সপোর্ট শেষে মেইন মেনু কল করা হলো
         ctx.reply('🎉 ডাটা এক্সপোর্ট হয়েছে। নতুন কাজ করতে মেইন মেনু থেকে সিলেক্ট করুন।');
         setTimeout(() => { sendMainMenu(ctx, ctx.chat.id); }, 1000);
     } catch (e) {
