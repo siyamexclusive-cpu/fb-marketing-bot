@@ -23,8 +23,9 @@ function moveToNextColumn(session) {
     return session;
 }
 
-// 🔥 মেইন মেনু লজিক 🔥
+// 🔥 নতুন মেইন মেনু লজিক 🔥
 async function sendMainMenu(ctx, chatId) {
+    // মেনুতে আসলে পুরনো সেশন এবং ডাটা রিসেট হয়ে যাবে
     await supabase.from('bot_sessions').upsert({
         chat_id: chatId, step: 'MAIN_MENU',
         column_names: [], permanent_settings: {},
@@ -32,7 +33,8 @@ async function sendMainMenu(ctx, chatId) {
     });
 
     const intro = `🌟 *স্বাগতম প্রো-লেভেল ফেসবুক মার্কেটিং বটে!* 🌟\n\n`
-                + `👉 *কী করতে চান তা সিলেক্ট করুন:*`;
+                + `আপনার কাজগুলো দ্রুত ও নির্ভুল করতে আমি প্রস্তুত।\n\n`
+                + `👉 *কী করতে চান তা নিচের বাটন থেকে সিলেক্ট করুন:*`;
     
     return ctx.replyWithMarkdown(intro, Markup.inlineKeyboard([
         [Markup.button.callback('📝 Create Sheet (শিট তৈরি)', 'sheet_create')],
@@ -47,6 +49,7 @@ bot.action('main_menu', async (ctx) => {
     return sendMainMenu(ctx, ctx.chat.id);
 });
 
+// 🔥 শিট ক্রিয়েট মেনু 🔥
 bot.action('sheet_create', async (ctx) => {
     await supabase.from('bot_sessions').update({ step: 'WAITING_FOR_COLUMNS' }).eq('chat_id', ctx.chat.id);
     ctx.answerCbQuery().catch(()=>{});
@@ -55,30 +58,16 @@ bot.action('sheet_create', async (ctx) => {
     );
 });
 
+// 🔥 ইউআইডি চেকার মেনু 🔥
 bot.action('uid_check', async (ctx) => {
     await supabase.from('bot_sessions').update({ step: 'WAITING_BULK_UID' }).eq('chat_id', ctx.chat.id);
     ctx.answerCbQuery().catch(()=>{});
-    return ctx.reply('✍️ *একসাথে অনেকগুলো UID পেস্ট করে পাঠিয়ে দিন.*\n\n(প্রতি লাইনে একটি করে UID অথবা পুরো লগ পেস্ট করে দিন)',
+    return ctx.reply('✍️ *একসাথে অনেকগুলো UID পেস্ট করে পাঠিয়ে দিন.*\n\n(আপনি প্রতি লাইনে একটি করে UID দিতে পারেন, অথবা পুরো আইডি লগ পেস্ট করে দিলেও আমি নিজে থেকে UID গুলো আলাদা করে নেব।)',
         Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]])
     );
 });
 
-bot.command('edit', async (ctx) => {
-    const chatId = ctx.chat.id;
-    const args = ctx.message.text.split(' ');
-    if (args.length < 2) return ctx.reply('⚠️ ব্যবহারবিধি: /edit <রো-নম্বর>\nউদাহরণ: /edit 5');
-    
-    const rowNum = parseInt(args[1]);
-    const { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', chatId).single();
-    if (!session || !session.data || rowNum < 1 || rowNum > session.data.length) {
-        return ctx.reply('❌ ভুল রো-নম্বর! এই নামের কোনো ডাটা নেই।');
-    }
-    const buttons = session.column_names.map(col => [Markup.button.callback(`✏️ ${col}`, `editcol_${rowNum}_${col}`)]);
-    buttons.push([Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]);
-    ctx.reply(`🛠️ Row ${rowNum} এর কোন কলামটি এডিট করতে চান?`, Markup.inlineKeyboard(buttons));
-});
-
-// 🔥 সিঙ্গেল UID চেকার (is_silhouette আপডেট) 🔥
+// 🔥 সিঙ্গেল UID চেকার কমান্ড (মেনু ছাড়াও কাজ করবে) 🔥
 bot.command('checkuid', async (ctx) => {
     const args = ctx.message.text.split(' ');
     if (args.length < 2) return ctx.reply('⚠️ ব্যবহারবিধি: /checkuid <ফেইসবুক-UID>\nউদাহরণ: /checkuid 100012345678901');
@@ -97,12 +86,9 @@ bot.command('checkuid', async (ctx) => {
         if (data.error) {
              statusText = `❌ *Blocked / Not Found*`;
              adviceText = `আইডিটি ডিলিট বা সম্পূর্ণ ব্লক হয়ে গেছে।`;
-        } else if (data.data && data.data.is_silhouette === true) {
-             statusText = `❌ *Disabled / Blocked*`;
-             adviceText = `ফেসবুক ডিফল্ট ছবি দিচ্ছে, যার মানে আইডিটি ডিজেবল বা ব্লক করা হয়েছে।`;
-        } else if (data.data && data.data.url) {
+        } else if (data.data) {
              statusText = `✅ *Active*`;
-             adviceText = `আইডিটি সচল আছে এবং আসল প্রোফাইল ছবি পাওয়া গেছে।`;
+             adviceText = `আইডিটি সচল আছে।`;
         } else {
              statusText = `⚠️ *Unknown*`;
              adviceText = `অবস্থা পরিষ্কার নয়।`;
@@ -122,6 +108,21 @@ bot.command('checkuid', async (ctx) => {
     }
 });
 
+bot.command('edit', async (ctx) => {
+    const chatId = ctx.chat.id;
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply('⚠️ ব্যবহারবিধি: /edit <রো-নম্বর>\nউদাহরণ: /edit 5');
+    
+    const rowNum = parseInt(args[1]);
+    const { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', chatId).single();
+    if (!session || !session.data || rowNum < 1 || rowNum > session.data.length) {
+        return ctx.reply('❌ ভুল রো-নম্বর! এই নামের কোনো ডাটা নেই।');
+    }
+    const buttons = session.column_names.map(col => [Markup.button.callback(`✏️ ${col}`, `editcol_${rowNum}_${col}`)]);
+    buttons.push([Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]);
+    ctx.reply(`🛠️ Row ${rowNum} এর কোন কলামটি এডিট করতে চান?`, Markup.inlineKeyboard(buttons));
+});
+
 bot.on('text', async (ctx) => {
     try {
         const chatId = ctx.chat.id;
@@ -130,9 +131,11 @@ bot.on('text', async (ctx) => {
         if (text.startsWith('/')) return;
 
         let { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', chatId).single();
-        if (!session || session.step === 'MAIN_MENU') return ctx.reply('অনুগ্রহ করে মেনু থেকে অপশন সিলেক্ট করুন।');
+        if (!session || session.step === 'MAIN_MENU') {
+            return ctx.reply('⚠️ অনুগ্রহ করে উপরের মেনু থেকে একটি অপশন সিলেক্ট করুন।');
+        }
 
-        // 🔥 বাল্ক ইউআইডি চেকার (is_silhouette আপডেট) 🔥
+        // 🔥 ১০০% নিখুঁত বাল্ক ইউআইডি চেকার (শুধু Error চেক করবে) 🔥
         if (session.step === 'WAITING_BULK_UID') {
             const lines = text.split('\n');
             const uids = lines.map(line => {
@@ -140,7 +143,7 @@ bot.on('text', async (ctx) => {
                 return /^\d{5,18}$/.test(part) ? part : null;
             }).filter(Boolean);
 
-            if (uids.length === 0) return ctx.reply('❌ কোনো বৈধ ফেসবুক ইউআইডি (UID) পাওয়া যায়নি! দয়া করে সঠিক নম্বরের লিস্ট দিন।');
+            if (uids.length === 0) return ctx.reply('❌ কোনো বৈধ ফেসবুক ইউআইডি (UID) পাওয়া যায়নি! দয়া করে সঠিক নম্বরের লিস্ট দিন।', Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
 
             const waitMsg = await ctx.reply(`⏳ মোট ${uids.length}টি UID চেক করা হচ্ছে...`);
             let resultText = `🔍 *বাল্ক ইউআইডি চেকিং রেজাল্ট:*\n\n`;
@@ -151,13 +154,10 @@ bot.on('text', async (ctx) => {
                     const response = await fetch(`https://graph.facebook.com/${uid}/picture?redirect=false`);
                     const data = await response.json();
                     
+                    // আসল লজিক: সার্ভার Error দিলে ব্লক, Data দিলে অ্যাক্টিভ
                     if (data.error) {
                         resultText += `\`${uid}\`  ❌\n`;
-                    } else if (data.data && data.data.is_silhouette === true) {
-                        // ফেসবুক ডিফল্ট সাদা-কালো ছবি দিলে সেটা Blocked
-                        resultText += `\`${uid}\`  ❌\n`;
-                    } else if (data.data && data.data.url) {
-                        // আসল ছবি থাকলে Active
+                    } else if (data.data) {
                         resultText += `\`${uid}\`  ✅\n`;
                     } else {
                         resultText += `\`${uid}\`  ❌\n`;
@@ -201,7 +201,7 @@ bot.on('text', async (ctx) => {
             session.data[rowIdx][colName] = text;
 
             await supabase.from('bot_sessions').update({ data: session.data, step: 'DATA_ENTRY', edit_target: {} }).eq('chat_id', chatId);
-            return ctx.reply(`✅ Row ${session.edit_target.row} এর [ ${colName} ] সফলভাবে আপডেট হয়েছে! পরবর্তী সাধারণ ইনপুট দিন।`);
+            return ctx.reply(`✅ Row ${session.edit_target.row} এর [ ${colName} ] সফলভাবে আপডেট হয়েছে! পরবর্তী সাধারণ ইনপুট দিন।`, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
         }
 
         if (session.step === 'DATA_ENTRY') {
@@ -210,7 +210,7 @@ bot.on('text', async (ctx) => {
 
             if (session.current_column_idx === 0) {
                 const isDuplicate = session.data.some(row => row[colName] === text);
-                if (isDuplicate) return ctx.reply(`⚠️ এই [ ${colName} ] আগেই প্রবেশ করানো হয়েছে! নতুন একটি দিন।`);
+                if (isDuplicate) return ctx.reply(`⚠️ এই [ ${colName} ] আগেই প্রবেশ করানো হয়েছে! নতুন একটি দিন।`, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
             }
             
             session.current_row_data[colName] = text;
@@ -268,7 +268,7 @@ bot.action('skip_permanent', async (ctx) => {
     await supabase.from('bot_sessions').update({ step: session.step, current_column_idx: session.current_column_idx, current_row_data: session.current_row_data }).eq('chat_id', ctx.chat.id);
     
     ctx.answerCbQuery();
-    ctx.reply(`🚀 *ডাটা এন্ট্রি শুরু!*\n\n👉 প্রথম Row এর জন্য [ ${session.column_names[session.current_column_idx]} ] দিন:`, { parse_mode: 'Markdown' });
+    ctx.reply(`🚀 *ডাটা এন্ট্রি শুরু!*\n\n👉 প্রথম Row এর জন্য [ ${session.column_names[session.current_column_idx]} ] দিন:`, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
 });
 
 bot.action(/^editcol_/, async (ctx) => {
@@ -289,7 +289,7 @@ bot.action('undo', async (ctx) => {
     
     await supabase.from('bot_sessions').update({ data: session.data, current_column_idx: session.current_column_idx, current_row_data: session.current_row_data }).eq('chat_id', ctx.chat.id);
     ctx.answerCbQuery('শেষ এন্ট্রি মুছে ফেলা হয়েছে!');
-    ctx.reply(`🗑️ সর্বশেষ Row মুছে ফেলা হয়েছে। বর্তমানে ${session.data.length} টি Row আছে।\n\n👉 আবার [ ${session.column_names[session.current_column_idx]} ] দিন:`);
+    ctx.reply(`🗑️ সর্বশেষ Row মুছে ফেলা হয়েছে। বর্তমানে ${session.data.length} টি Row আছে।\n\n👉 আবার [ ${session.column_names[session.current_column_idx]} ] দিন:`, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
 });
 
 bot.action('status', async (ctx) => {
@@ -323,7 +323,10 @@ async function exportData(ctx, format) {
             await ctx.replyWithDocument({ source: buffer, filename: `FB_Data_${Date.now()}.txt` });
         }
         await supabase.from('bot_sessions').delete().eq('chat_id', ctx.chat.id);
-        ctx.reply('🎉 ডাটা এক্সপোর্ট হয়েছে। নতুন কাজ করতে মেইন মেনুতে যান।', Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
+        
+        // এক্সপোর্ট শেষে মেইন মেনু কল করা হলো
+        ctx.reply('🎉 ডাটা এক্সপোর্ট হয়েছে। নতুন কাজ করতে মেইন মেনু থেকে সিলেক্ট করুন।');
+        setTimeout(() => { sendMainMenu(ctx, ctx.chat.id); }, 1000);
     } catch (e) {
         ctx.reply('❌ এরর হয়েছে!');
     }
