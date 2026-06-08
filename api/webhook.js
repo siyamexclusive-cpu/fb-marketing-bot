@@ -23,9 +23,8 @@ function moveToNextColumn(session) {
     return session;
 }
 
-// 🔥 নতুন স্টার্ট মেনু লজিক 🔥
+// 🔥 মেইন মেনু লজিক 🔥
 async function sendMainMenu(ctx, chatId) {
-    // মেনুতে আসলে পুরনো সেশন রিসেট হয়ে যাবে
     await supabase.from('bot_sessions').upsert({
         chat_id: chatId, step: 'MAIN_MENU',
         column_names: [], permanent_settings: {},
@@ -48,7 +47,6 @@ bot.action('main_menu', async (ctx) => {
     return sendMainMenu(ctx, ctx.chat.id);
 });
 
-// 🔥 শিট ক্রিয়েট মেনু 🔥
 bot.action('sheet_create', async (ctx) => {
     await supabase.from('bot_sessions').update({ step: 'WAITING_FOR_COLUMNS' }).eq('chat_id', ctx.chat.id);
     ctx.answerCbQuery().catch(()=>{});
@@ -57,7 +55,6 @@ bot.action('sheet_create', async (ctx) => {
     );
 });
 
-// 🔥 ইউআইডি চেকার মেনু 🔥
 bot.action('uid_check', async (ctx) => {
     await supabase.from('bot_sessions').update({ step: 'WAITING_BULK_UID' }).eq('chat_id', ctx.chat.id);
     ctx.answerCbQuery().catch(()=>{});
@@ -71,14 +68,58 @@ bot.command('edit', async (ctx) => {
     const args = ctx.message.text.split(' ');
     if (args.length < 2) return ctx.reply('⚠️ ব্যবহারবিধি: /edit <রো-নম্বর>\nউদাহরণ: /edit 5');
     
+    const rowNum = parseInt(args[1]);
     const { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', chatId).single();
     if (!session || !session.data || rowNum < 1 || rowNum > session.data.length) {
         return ctx.reply('❌ ভুল রো-নম্বর! এই নামের কোনো ডাটা নেই।');
     }
-    const rowNum = parseInt(args[1]);
     const buttons = session.column_names.map(col => [Markup.button.callback(`✏️ ${col}`, `editcol_${rowNum}_${col}`)]);
     buttons.push([Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]);
     ctx.reply(`🛠️ Row ${rowNum} এর কোন কলামটি এডিট করতে চান?`, Markup.inlineKeyboard(buttons));
+});
+
+// 🔥 সিঙ্গেল UID চেকার (is_silhouette আপডেট) 🔥
+bot.command('checkuid', async (ctx) => {
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply('⚠️ ব্যবহারবিধি: /checkuid <ফেইসবুক-UID>\nউদাহরণ: /checkuid 100012345678901');
+    
+    const uid = args[1].trim();
+    const waitMsg = await ctx.reply(`⏳ UID [ ${uid} ] চেক করা হচ্ছে...`);
+
+    try {
+        const url = `https://graph.facebook.com/${uid}/picture?redirect=false`;
+        const response = await fetch(url);
+        const data = await response.json();
+
+        let statusText = '';
+        let adviceText = '';
+
+        if (data.error) {
+             statusText = `❌ *Blocked / Not Found*`;
+             adviceText = `আইডিটি ডিলিট বা সম্পূর্ণ ব্লক হয়ে গেছে।`;
+        } else if (data.data && data.data.is_silhouette === true) {
+             statusText = `❌ *Disabled / Blocked*`;
+             adviceText = `ফেসবুক ডিফল্ট ছবি দিচ্ছে, যার মানে আইডিটি ডিজেবল বা ব্লক করা হয়েছে।`;
+        } else if (data.data && data.data.url) {
+             statusText = `✅ *Active*`;
+             adviceText = `আইডিটি সচল আছে এবং আসল প্রোফাইল ছবি পাওয়া গেছে।`;
+        } else {
+             statusText = `⚠️ *Unknown*`;
+             adviceText = `অবস্থা পরিষ্কার নয়।`;
+        }
+
+        await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, undefined, 
+            `🔍 *Facebook UID Result*\n\n` +
+            `👤 *UID:* \`${uid}\`\n` +
+            `📊 *Status:* ${statusText}\n\n` +
+            `💡 *Advice:* ${adviceText}\n` +
+            `🔗 [প্রোফাইল লিংক](https://www.facebook.com/${uid})`,
+            { parse_mode: 'Markdown', disable_web_page_preview: true }
+        );
+
+    } catch (error) {
+        await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, undefined, `❌ চেক করতে সমস্যা হয়েছে: ${error.message}`);
+    }
 });
 
 bot.on('text', async (ctx) => {
@@ -91,7 +132,7 @@ bot.on('text', async (ctx) => {
         let { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', chatId).single();
         if (!session || session.step === 'MAIN_MENU') return ctx.reply('অনুগ্রহ করে মেনু থেকে অপশন সিলেক্ট করুন।');
 
-        // 🔥 ১০০% নিখুঁত বাল্ক ইউআইডি চেকার (Graph Exception Logic) 🔥
+        // 🔥 বাল্ক ইউআইডি চেকার (is_silhouette আপডেট) 🔥
         if (session.step === 'WAITING_BULK_UID') {
             const lines = text.split('\n');
             const uids = lines.map(line => {
@@ -107,16 +148,19 @@ bot.on('text', async (ctx) => {
             for (let i = 0; i < uids.length; i++) {
                 const uid = uids[i];
                 try {
-                    // সরাসরি Graph API থেকে ডাটা কল করা হচ্ছে
-                    const response = await fetch(`https://graph.facebook.com/${uid}`);
+                    const response = await fetch(`https://graph.facebook.com/${uid}/picture?redirect=false`);
                     const data = await response.json();
                     
-                    // Code 100 মানে Object does not exist (অর্থাৎ আইডি ডিলিট বা ব্লকড)
-                    if (data.error && (data.error.code === 100 || data.error.code === 803)) {
+                    if (data.error) {
                         resultText += `\`${uid}\`  ❌\n`;
-                    } else {
-                        // যদি অন্য কোনো এরর আসে (যেমন token needed), তার মানে আইডিটি সচল আছে
+                    } else if (data.data && data.data.is_silhouette === true) {
+                        // ফেসবুক ডিফল্ট সাদা-কালো ছবি দিলে সেটা Blocked
+                        resultText += `\`${uid}\`  ❌\n`;
+                    } else if (data.data && data.data.url) {
+                        // আসল ছবি থাকলে Active
                         resultText += `\`${uid}\`  ✅\n`;
+                    } else {
+                        resultText += `\`${uid}\`  ❌\n`;
                     }
                 } catch (err) {
                     resultText += `\`${uid}\`  ❌\n`;
