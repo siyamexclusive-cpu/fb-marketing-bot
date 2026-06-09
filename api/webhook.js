@@ -5,15 +5,24 @@ const xlsx = require('xlsx');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
+// Voltxsms API Base URL
+const VOLTX_BASE = 'https://api.2oo9.cloud/MXS47FLFX0U/tnevs/@public/api';
+const CHANNEL_USERNAME = '@fb_worker_pro_OTP'; 
+
+async function getVoltxHeaders() {
+    return {
+        'mauthapi': process.env.VOLTX_API_KEY || '', 
+        'Content-Type': 'application/json'
+    };
+}
+
 function moveToNextColumn(session) {
     let idx = session.current_column_idx;
     const cols = session.column_names;
     const perm = session.permanent_settings;
-
     while (idx < cols.length) {
-        const colName = cols[idx];
-        if (perm[colName] !== undefined) {
-            session.current_row_data[colName] = perm[colName];
+        if (perm[cols[idx]] !== undefined) {
+            session.current_row_data[cols[idx]] = perm[cols[idx]];
             idx++;
         } else {
             break;
@@ -32,21 +41,142 @@ async function sendMainMenu(ctx, chatId) {
     });
 
     const intro = `🌟 *স্বাগতম প্রো-লেভেল ফেসবুক মার্কেটিং বটে!* 🌟\n\n`
-                + `আপনার কাজগুলো দ্রুত ও নির্ভুল করতে আমি প্রস্তুত।\n\n`
-                + `👉 *কী করতে চান তা নিচের বাটন থেকে সিলেক্ট করুন:*`;
+                + `আপনার ডাটা এন্ট্রি এবং OTP নাম্বার ম্যানেজমেন্ট এখন আরও সহজ।\n\n`
+                + `👉 *নিচের কিবোর্ড থেকে "📱 Get Number" এ চাপ দিন অথবা ডাটা এন্ট্রির কাজ সিলেক্ট করুন:*`;
     
-    return ctx.replyWithMarkdown(intro, Markup.inlineKeyboard([
-        [Markup.button.callback('📝 Create Sheet (শিট তৈরি)', 'sheet_create')],
-        [Markup.button.callback('🔍 UID Checker (বাল্ক চেক)', 'uid_check')]
+    // নিচের কিবোর্ডে Get Number বাটন যোগ করা হলো
+    await ctx.replyWithMarkdown(intro, Markup.keyboard([
+        ['📱 Get Number (OTP)']
+    ]).resize());
+
+    return ctx.replyWithMarkdown(`👉 *ডাটা এন্ট্রি মেনু:*`, Markup.inlineKeyboard([
+        [Markup.button.callback('📝 Create Sheet (শিট তৈরি)', 'sheet_create')]
     ]));
 }
 
 bot.command('start', (ctx) => sendMainMenu(ctx, ctx.chat.id));
-
 bot.action('main_menu', async (ctx) => {
     ctx.answerCbQuery().catch(()=>{});
     return sendMainMenu(ctx, ctx.chat.id);
 });
+
+// ==========================================
+// 🔥 VOLTXSMS API & OTP LOGIC 🔥
+// ==========================================
+
+bot.hears('📱 Get Number (OTP)', async (ctx) => {
+    ctx.reply('🌐 *কোন প্যানেল থেকে ফেসবুকের নাম্বার নিতে চান?*', {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [[{ text: '⚡ Voltxsms Panel', callback_data: 'voltx_menu' }]]
+        }
+    });
+});
+
+bot.action('voltx_menu', async (ctx) => {
+    ctx.answerCbQuery('লাইভ রেঞ্জ খোঁজা হচ্ছে...').catch(()=>{});
+    try {
+        const res = await fetch(`${VOLTX_BASE}/liveaccess`, { headers: await getVoltxHeaders() });
+        const data = await res.json();
+        
+        let fbRanges = [];
+        if(data?.data?.services) {
+            const fbService = data.data.services.find(s => s.sid.toLowerCase().includes('facebook'));
+            if(fbService && fbService.ranges) {
+                fbRanges = fbService.ranges.map(r => r.replace(/X/g, ''));
+            }
+        }
+        
+        // এপিআই থেকে না পেলে ডিফল্ট কিছু রেঞ্জ দেখাবে
+        if(fbRanges.length === 0) fbRanges = ['23275', '447', '22501']; 
+
+        const buttons = fbRanges.map(r => [Markup.button.callback(`🔥 ${r}XXX (Active)`, `v_get_${r}`)]);
+        ctx.reply('🔥 *ফেসবুকের জন্য বর্তমানে সবচেয়ে এক্টিভ রেঞ্জগুলো:*', Markup.inlineKeyboard(buttons));
+    } catch(e) {
+        ctx.reply('❌ Voltxsms সার্ভারের সাথে কানেক্ট করা যাচ্ছে না। API Key ঠিক আছে কিনা চেক করুন।');
+    }
+});
+
+bot.action(/^v_get_(.+)$/, async (ctx) => {
+    const rid = ctx.match[1];
+    ctx.answerCbQuery('নাম্বার জেনারেট হচ্ছে...').catch(()=>{});
+    try {
+        const res = await fetch(`${VOLTX_BASE}/getnum`, {
+            method: 'POST',
+            headers: await getVoltxHeaders(),
+            body: JSON.stringify({ rid: rid })
+        });
+        const data = await res.json();
+
+        if (data.meta && data.meta.code === 200 && data.data && data.data.full_number) {
+            const num = data.data.full_number;
+            const msg = `✅ *নতুন ফেসবুক নাম্বার বরাদ্দ করা হয়েছে!*\n\n`
+                      + `📱 *Number:* \`${num}\`\n`
+                      + `🌍 *Country:* ${data.data.country || 'Unknown'}\n\n`
+                      + `💡 _(নাম্বারের ওপর ট্যাপ করলেই কপি হয়ে যাবে)_`;
+
+            ctx.replyWithMarkdown(msg, Markup.inlineKeyboard([
+                [Markup.button.callback('📩 View OTP (কোড দেখুন)', `v_otp_${num}`)],
+                [Markup.button.callback('🔄 Change Number (বদলান)', `v_get_${rid}`)],
+                [Markup.button.url('🌐 OTP Channel', `https://t.me/${CHANNEL_USERNAME.replace('@', '')}`)]
+            ]));
+        } else {
+            ctx.reply(`❌ এই রেঞ্জে আপাতত নাম্বার নেই: ${data?.meta?.status || 'Out of stock'}`);
+        }
+    } catch(e) {
+        ctx.reply('❌ এপিআই এরর! আবার চেষ্টা করুন।');
+    }
+});
+
+bot.action(/^v_otp_(.+)$/, async (ctx) => {
+    const fullNum = ctx.match[1];
+    const numToFind = fullNum.replace('+', '');
+    ctx.answerCbQuery('OTP চেক করা হচ্ছে...').catch(()=>{});
+
+    try {
+        const res = await fetch(`${VOLTX_BASE}/success-otp`, { headers: await getVoltxHeaders() });
+        const data = await res.json();
+
+        if (data?.data?.otps) {
+            const foundOtp = data.data.otps.find(o => o.number.includes(numToFind) || numToFind.includes(o.number));
+
+            if (foundOtp) {
+                // মেসেজ থেকে শুধু কোডটুকু বের করার চেষ্টা
+                const codeMatch = foundOtp.message.match(/\d{5,8}/);
+                const code = codeMatch ? codeMatch[0] : foundOtp.message;
+
+                const userMsg = `🎉 *ফেসবুক কোড সফলভাবে পাওয়া গেছে!*\n\n`
+                              + `📱 *Number:* \`${fullNum}\`\n`
+                              + `✉️ *Full SMS:* ${foundOtp.message}\n`
+                              + `🔑 *Code:* \`${code}\`\n\n`
+                              + `💡 _(কোডের ওপর ট্যাপ করে কপি করুন)_`;
+                await ctx.replyWithMarkdown(userMsg);
+
+                // চ্যানেলে মেসেজ পাঠানো (নাম্বার হাইড করে)
+                const maskedNum = "******" + fullNum.slice(-4);
+                const channelMsg = `🔥 *New Facebook Code Received!*\n\n`
+                                 + `📱 *Number:* \`${maskedNum}\`\n`
+                                 + `🔑 *Code:* \`${code}\`\n\n`
+                                 + `🤖 _Powered by Pro Bot_`;
+                
+                // বট চ্যানেলের এডমিন না থাকলে এরর ইগনোর করবে
+                await bot.telegram.sendMessage(CHANNEL_USERNAME, channelMsg, { parse_mode: 'Markdown' }).catch(()=>{});
+
+            } else {
+                ctx.reply('⏳ এখনো কোনো কোড আসেনি। একটু পর আবার "View OTP" বাটনে চাপ দিন।');
+            }
+        } else {
+            ctx.reply('⏳ কোড এখনো রিসিভ হয়নি।');
+        }
+    } catch (e) {
+        ctx.reply('❌ OTP সার্ভারে সমস্যা হয়েছে।');
+    }
+});
+
+
+// ==========================================
+// 🔥 DATA ENTRY LOGIC (পূর্বের মতো নিখুঁত) 🔥
+// ==========================================
 
 bot.action('sheet_create', async (ctx) => {
     await supabase.from('bot_sessions').update({ step: 'WAITING_FOR_COLUMNS' }).eq('chat_id', ctx.chat.id);
@@ -54,52 +184,6 @@ bot.action('sheet_create', async (ctx) => {
     return ctx.reply('👉 *শুরু করতে আপনার শিটের কলামগুলোর নাম কমা (,) দিয়ে দিন:*\n📝 উদাহরণ: UID, Password, Cookies', 
         Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]])
     );
-});
-
-bot.action('uid_check', async (ctx) => {
-    await supabase.from('bot_sessions').update({ step: 'WAITING_BULK_UID' }).eq('chat_id', ctx.chat.id);
-    ctx.answerCbQuery().catch(()=>{});
-    return ctx.reply('✍️ *একসাথে অনেকগুলো UID পেস্ট করে পাঠিয়ে দিন.*\n\n(আপনি প্রতি লাইনে একটি করে UID দিতে পারেন, অথবা পুরো আইডি লগ পেস্ট করে দিলেও আমি নিজে থেকে UID গুলো আলাদা করে নেব।)',
-        Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]])
-    );
-});
-
-// 🔥 সিঙ্গেল UID চেকার (Web Scraper Method) 🔥
-bot.command('checkuid', async (ctx) => {
-    const args = ctx.message.text.split(' ');
-    if (args.length < 2) return ctx.reply('⚠️ ব্যবহারবিধি: /checkuid <ফেইসবুক-UID>\nউদাহরণ: /checkuid 100012345678901');
-    
-    const uid = args[1].trim();
-    const waitMsg = await ctx.reply(`⏳ UID [ ${uid} ] চেক করা হচ্ছে...`);
-
-    try {
-        const response = await fetch(`https://www.facebook.com/${uid}`, {
-            method: 'GET',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml',
-                'Accept-Language': 'en-US,en;q=0.5'
-            }
-        });
-        const html = await response.text();
-
-        let statusText = '';
-        if (response.status === 404 || html.includes("isn't available right now") || html.includes("page isn't available")) {
-             statusText = `❌ *Blocked / Disabled*`;
-        } else {
-             statusText = `✅ *Active*`;
-        }
-
-        await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, undefined, 
-            `🔍 *Facebook UID Result*\n\n` +
-            `👤 *UID:* \`${uid}\`\n` +
-            `📊 *Status:* ${statusText}\n\n` +
-            `🔗 [প্রোফাইল লিংক](https://www.facebook.com/${uid})`,
-            { parse_mode: 'Markdown', disable_web_page_preview: true }
-        );
-    } catch (error) {
-        await ctx.telegram.editMessageText(ctx.chat.id, waitMsg.message_id, undefined, `❌ চেক করতে সমস্যা হয়েছে: ${error.message}`);
-    }
 });
 
 bot.command('edit', async (ctx) => {
@@ -122,55 +206,10 @@ bot.on('text', async (ctx) => {
         const chatId = ctx.chat.id;
         const text = ctx.message.text.trim();
 
-        if (text.startsWith('/')) return;
+        if (text.startsWith('/') || text === '📱 Get Number (OTP)') return;
 
         let { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', chatId).single();
-        if (!session || session.step === 'MAIN_MENU') {
-            return ctx.reply('⚠️ অনুগ্রহ করে উপরের মেনু থেকে একটি অপশন সিলেক্ট করুন।');
-        }
-
-        // 🔥 বাল্ক ইউআইডি চেকার (Web Scraper Method - check.fb.tools এর মতো) 🔥
-        if (session.step === 'WAITING_BULK_UID') {
-            const lines = text.split('\n');
-            const uids = lines.map(line => {
-                const part = line.split(/[|,\s]+/)[0].trim();
-                return /^\d{5,18}$/.test(part) ? part : null;
-            }).filter(Boolean);
-
-            if (uids.length === 0) return ctx.reply('❌ কোনো বৈধ ফেসবুক ইউআইডি (UID) পাওয়া যায়নি! দয়া করে সঠিক নম্বরের লিস্ট দিন।', Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
-
-            const waitMsg = await ctx.reply(`⏳ মোট ${uids.length}টি UID চেক করা হচ্ছে...`);
-            let resultText = `🔍 *বাল্ক ইউআইডি চেকিং রেজাল্ট:*\n\n`;
-
-            for (let i = 0; i < uids.length; i++) {
-                const uid = uids[i];
-                try {
-                    const response = await fetch(`https://www.facebook.com/${uid}`, {
-                        method: 'GET',
-                        headers: {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                            'Accept': 'text/html,application/xhtml+xml',
-                            'Accept-Language': 'en-US,en;q=0.5'
-                        }
-                    });
-                    const html = await response.text();
-                    
-                    // ৪MD স্ট্যাটাস বা নির্দিষ্ট টেক্সট পেলে ❌, নাহলে ✅
-                    if (response.status === 404 || html.includes("isn't available right now") || html.includes("page isn't available")) {
-                        resultText += `\`${uid}\`  ❌\n`;
-                    } else {
-                        resultText += `\`${uid}\`  ✅\n`;
-                    }
-                } catch (err) {
-                    resultText += `\`${uid}\`  ❌\n`;
-                }
-            }
-
-            await ctx.telegram.deleteMessage(chatId, waitMsg.message_id).catch(()=>{});
-            return ctx.replyWithMarkdown(resultText + `\n💡 আপনি চাইলে আরও UID পেস্ট করতে পারেন, অথবা মেইন মেনুতে ফিরে যেতে পারেন।`, 
-                Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]])
-            );
-        }
+        if (!session || session.step === 'MAIN_MENU') return;
 
         if (session.step === 'WAITING_FOR_COLUMNS') {
             const cols = text.split(',').map(c => c.trim()).filter(c => c.length > 0);
@@ -209,7 +248,7 @@ bot.on('text', async (ctx) => {
 
             if (session.current_column_idx === 0) {
                 const isDuplicate = session.data.some(row => row[colName] === text);
-                if (isDuplicate) return ctx.reply(`⚠️ এই [ ${colName} ] আগেই প্রবেশ করানো হয়েছে! নতুন একটি দিন।`, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
+                if (isDuplicate) return ctx.reply(`⚠️ এই [ ${colName} ] আগেই প্রবেশ করানো হয়েছে! নতুন একটি দিন।`);
             }
             
             session.current_row_data[colName] = text;
@@ -238,7 +277,7 @@ bot.on('text', async (ctx) => {
                             inline_keyboard: [
                                 [{ text: '📊 Status', callback_data: 'status' }, { text: '↩️ Undo Last', callback_data: 'undo' }],
                                 [{ text: '💾 Save XLSX', callback_data: 'export_xlsx' }, { text: '📄 Save TXT', callback_data: 'export_txt' }],
-                                [{ text: '🏠 মেইন মেনু (এন্ট্রি শেষ করুন)', callback_data: 'main_menu' }]
+                                [{ text: '🏠 মেইন মেনু', callback_data: 'main_menu' }]
                             ]
                         }
                     }
@@ -249,7 +288,7 @@ bot.on('text', async (ctx) => {
             return ctx.reply(`👉 এবার দিন [ ${cols[session.current_column_idx]} ]:`, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু (বাতিল)', 'main_menu')]]));
         }
     } catch (e) {
-        console.error("Text handler error:", e);
+        console.error(e);
     }
 });
 
@@ -265,7 +304,6 @@ bot.action('skip_permanent', async (ctx) => {
     session.step = 'DATA_ENTRY'; session.current_column_idx = 0; session.current_row_data = {};
     session = moveToNextColumn(session);
     await supabase.from('bot_sessions').update({ step: session.step, current_column_idx: session.current_column_idx, current_row_data: session.current_row_data }).eq('chat_id', ctx.chat.id);
-    
     ctx.answerCbQuery();
     ctx.reply(`🚀 *ডাটা এন্ট্রি শুরু!*\n\n👉 প্রথম Row এর জন্য [ ${session.column_names[session.current_column_idx]} ] দিন:`, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
 });
@@ -280,12 +318,11 @@ bot.action(/^editcol_/, async (ctx) => {
 
 bot.action('undo', async (ctx) => {
     let { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', ctx.chat.id).single();
-    if (!session.data || session.data.length === 0) return ctx.answerCbQuery('মুছার মতো কোনো ডাটা নেই!', { show_alert: true });
+    if (!session.data || session.data.length === 0) return ctx.answerCbQuery('মুছার মতো ডাটা নেই!', { show_alert: true });
     
     session.data.pop();
     session.current_column_idx = 0; session.current_row_data = {};
     session = moveToNextColumn(session);
-    
     await supabase.from('bot_sessions').update({ data: session.data, current_column_idx: session.current_column_idx, current_row_data: session.current_row_data }).eq('chat_id', ctx.chat.id);
     ctx.answerCbQuery('শেষ এন্ট্রি মুছে ফেলা হয়েছে!');
     ctx.reply(`🗑️ সর্বশেষ Row মুছে ফেলা হয়েছে। বর্তমানে ${session.data.length} টি Row আছে।\n\n👉 আবার [ ${session.column_names[session.current_column_idx]} ] দিন:`, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
@@ -304,9 +341,7 @@ async function exportData(ctx, format) {
     try {
         const orderedData = session.data.map(row => {
             let newRow = {};
-            session.column_names.forEach(col => {
-                newRow[col] = row[col] || ''; 
-            });
+            session.column_names.forEach(col => { newRow[col] = row[col] || ''; });
             return newRow;
         });
 
@@ -322,7 +357,6 @@ async function exportData(ctx, format) {
             await ctx.replyWithDocument({ source: buffer, filename: `FB_Data_${Date.now()}.txt` });
         }
         await supabase.from('bot_sessions').delete().eq('chat_id', ctx.chat.id);
-        
         ctx.reply('🎉 ডাটা এক্সপোর্ট হয়েছে। নতুন কাজ করতে মেইন মেনু থেকে সিলেক্ট করুন।');
         setTimeout(() => { sendMainMenu(ctx, ctx.chat.id); }, 1000);
     } catch (e) {
@@ -335,14 +369,6 @@ bot.action('export_txt', (ctx) => exportData(ctx, 'txt'));
 
 module.exports = async function handler(req, res) {
     if (req.method === 'POST') {
-        try {
-            await bot.handleUpdate(req.body);
-            res.status(200).send('OK');
-        } catch (error) {
-            console.error("❌ Error:", error);
-            res.status(500).send('Error');
-        }
-    } else {
-        res.status(200).send('Pro Bot is Running Fine!');
-    }
+        try { await bot.handleUpdate(req.body); res.status(200).send('OK'); } catch (error) { res.status(500).send('Error'); }
+    } else { res.status(200).send('Pro Bot is Running Fine!'); }
 };
