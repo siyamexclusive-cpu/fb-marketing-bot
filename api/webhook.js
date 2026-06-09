@@ -10,13 +10,12 @@ const OTP_CHANNEL = '@fb_worker_pro_OTP';
 const WITHDRAW_CHANNEL = '@Fb_Worker_Withdrawal';
 const RATE_PER_OTP = 0.00408; 
 const USD_TO_BDT = 118;
-const MIN_WITHDRAW = 0.70; // 🔥 সর্বনিম্ন উইথড্রাল ৭০ সেন্ট 🔥
+const MIN_WITHDRAW = 0.70; 
 
 async function getVoltxHeaders() {
     return { 'mauthapi': process.env.VOLTX_API_KEY || '', 'Content-Type': 'application/json' };
 }
 
-// 🔥 ব্যান চেকার মিডেলওয়্যার 🔥
 bot.use(async (ctx, next) => {
     if (!ctx.chat) return next();
     const { data: user } = await supabase.from('user_earnings').select('is_banned').eq('chat_id', ctx.chat.id).single();
@@ -27,7 +26,6 @@ bot.use(async (ctx, next) => {
     return next();
 });
 
-// স্প্যাম ওয়ার্নিং ফাংশন
 async function handleWarning(ctx, chatId) {
     const { data: user } = await supabase.from('user_earnings').select('warnings').eq('chat_id', chatId).single();
     let warns = (user?.warnings || 0) + 1;
@@ -42,7 +40,6 @@ async function handleWarning(ctx, chatId) {
     }
 }
 
-// 🔥 মেইন মেনু 🔥
 async function sendMainMenu(ctx, chatId) {
     await supabase.from('bot_sessions').upsert({
         chat_id: chatId, step: 'MAIN_MENU',
@@ -60,39 +57,26 @@ async function sendMainMenu(ctx, chatId) {
 bot.command('start', (ctx) => sendMainMenu(ctx, ctx.chat.id));
 bot.action('main_menu', async (ctx) => { ctx.answerCbQuery().catch(()=>{}); return sendMainMenu(ctx, ctx.chat.id); });
 
-// ==========================================
-// 🔥 ADMIN COMMANDS (হিডেন ফিচার) 🔥
-// ==========================================
 function isAdmin(ctx) {
     return process.env.ADMIN_CHAT_ID && ctx.chat.id.toString() === process.env.ADMIN_CHAT_ID;
 }
 
-// 💰 নতুন কমান্ড: টেস্ট করার জন্য ম্যানুয়ালি ব্যালেন্স অ্যাড করা 💰
 bot.command('addbalance', async (ctx) => {
     if (!isAdmin(ctx)) return;
     const args = ctx.message.text.split(' ');
-    if (args.length < 3) return ctx.reply('⚠️ ব্যবহারবিধি: /addbalance <User-ID> <Amount>\nউদাহরণ: /addbalance 123456789 5.50');
+    if (args.length < 3) return ctx.reply('⚠️ ব্যবহারবিধি: /addbalance <User-ID> <Amount>');
 
     const targetUserId = args[1].trim();
     const amountToAdd = parseFloat(args[2]);
 
-    if (isNaN(amountToAdd) || amountToAdd <= 0) {
-        return ctx.reply('❌ ভুল অ্যামাউন্ট! সঠিক পজিটিভ সংখ্যা দিন।');
-    }
+    if (isNaN(amountToAdd) || amountToAdd <= 0) return ctx.reply('❌ ভুল অ্যামাউন্ট! সঠিক পজিটিভ সংখ্যা দিন।');
 
     try {
         const { data: user } = await supabase.from('user_earnings').select('balance').eq('chat_id', targetUserId).single();
-        const currentBalance = user?.balance || 0;
-        const newBalance = currentBalance + amountToAdd;
+        const newBalance = (user?.balance || 0) + amountToAdd;
 
-        await supabase.from('user_earnings').upsert({
-            chat_id: targetUserId,
-            balance: newBalance
-        });
-
-        ctx.reply(`✅ *সাকসেস!* User \`${targetUserId}\` এর অ্যাকাউন্টে $${amountToAdd} যোগ করা হয়েছে।\n💰 বর্তমান ব্যালেন্স: $${newBalance.toFixed(4)}`, { parse_mode: 'Markdown' });
-        
-        // ইউজারকে মেসেজ পাঠানো
+        await supabase.from('user_earnings').upsert({ chat_id: targetUserId, balance: newBalance });
+        ctx.reply(`✅ *সাকসেস!* User \`${targetUserId}\` এর অ্যাকাউন্টে $${amountToAdd} যোগ করা হয়েছে।`, { parse_mode: 'Markdown' });
         bot.telegram.sendMessage(targetUserId, `💰 *ব্যালেন্স আপডেট!*\nঅ্যাডমিন আপনার অ্যাকাউন্টে $${amountToAdd} যোগ করেছেন।\n✨ বর্তমান ব্যালেন্স: $${newBalance.toFixed(4)}`, { parse_mode: 'Markdown' }).catch(()=>{});
     } catch (e) {
         ctx.reply(`❌ এরর হয়েছে: ${e.message}`);
@@ -102,9 +86,9 @@ bot.command('addbalance', async (ctx) => {
 bot.command('checkchannel', async (ctx) => {
     if (!isAdmin(ctx)) return;
     try {
-        const chatAdmins = await ctx.telegram.getChatAdministrators(OTP_CHANNEL);
+        await ctx.telegram.getChatAdministrators(WITHDRAW_CHANNEL);
         ctx.reply('✅ চ্যানেল কানেকশন সাকসেসফুল!');
-    } catch(e) { ctx.reply('❌ চ্যানেল কানেকশন ফেইল্ড!'); }
+    } catch(e) { ctx.reply('❌ চ্যানেল কানেকশন ফেইল্ড! বটকে এডমিন করেছেন কিনা চেক করুন।'); }
 });
 
 bot.command('userstatus', async (ctx) => {
@@ -112,9 +96,7 @@ bot.command('userstatus', async (ctx) => {
     const { data: allUsers } = await supabase.from('user_earnings').select('*');
     const { data: adminData } = await supabase.from('admin_stats').select('*').eq('id', 1).single();
     let totalUnpaidOtps = 0; let totalUnpaidBalance = 0;
-    if(allUsers) {
-        allUsers.forEach(u => { totalUnpaidOtps += (u.unpaid_otps || 0); totalUnpaidBalance += (u.balance || 0); });
-    }
+    if(allUsers) { allUsers.forEach(u => { totalUnpaidOtps += (u.unpaid_otps || 0); totalUnpaidBalance += (u.balance || 0); }); }
     const msg = `👑 *Admin Dashboard*\n📅 *Since:* ${adminData?.last_cleared_date || 'N/A'}\n\n👥 *Users:* ${allUsers ? allUsers.length : 0}\n⏳ *Total Unpaid OTPs:* ${totalUnpaidOtps}\n💰 *Total Pending:* $${totalUnpaidBalance.toFixed(4)}`;
     ctx.replyWithMarkdown(msg);
 });
@@ -130,9 +112,6 @@ bot.command('clearstatus', async (ctx) => {
     ctx.reply(`✅ রিসেট সম্পন্ন হয়েছে! নতুন তারিখ: ${today}`);
 });
 
-// ==========================================
-// 🔥 MY ACCOUNT & WITHDRAWAL SYSTEM 🔥
-// ==========================================
 bot.hears('💳 My Account', async (ctx) => {
     const { data: userData } = await supabase.from('user_earnings').select('*').eq('chat_id', ctx.chat.id).single();
     const balance = userData?.balance || 0;
@@ -156,9 +135,6 @@ bot.action(/^wd_(.+)$/, async (ctx) => {
     ctx.reply(`আপনি *${walletType}* সিলেক্ট করেছেন।\n\n👉 *আপনার ১১-ডিজিটের ${walletType} নাম্বারটি দিন:*`, {parse_mode: 'Markdown'});
 });
 
-// ==========================================
-// 🔥 TEXT HANDLER 🔥
-// ==========================================
 bot.on('text', async (ctx) => {
     const chatId = ctx.chat.id;
     const text = ctx.message.text.trim();
@@ -187,9 +163,8 @@ bot.on('text', async (ctx) => {
             return;
         }
 
-        // 🔥 সর্বনিম্ন উইথড্রাল লিমিট ভ্যালিডেশন 🔥
         if (amount < MIN_WITHDRAW) {
-            return ctx.reply(`❌ *উইথড্রল ব্যর্থ!*\nআপনি সর্বনিম্ন $${MIN_WITHDRAW} (৭০ সেন্ট) উইথড্র করতে পারবেন। সঠিক অ্যামাউন্ট দিন:`);
+            return ctx.reply(`❌ *উইথড্রল ব্যর্থ!*\nআপনি সর্বনিম্ন $${MIN_WITHDRAW} উইথড্র করতে পারবেন। সঠিক অ্যামাউন্ট দিন:`);
         }
 
         const { data: user } = await supabase.from('user_earnings').select('balance').eq('chat_id', chatId).single();
@@ -207,12 +182,40 @@ bot.on('text', async (ctx) => {
         return ctx.replyWithMarkdown(msg, Markup.inlineKeyboard([[Markup.button.callback('✅ Confirm Withdrawal', 'confirm_withdraw')], [Markup.button.callback('❌ ক্যান্সেল', 'main_menu')]]));
     }
     
-    // শিট এন্ট্রি কোড নিচে থাকবে...
+    // Data Entry logic...
+    if (session.step === 'WAITING_FOR_COLUMNS') {
+        const cols = text.split(',').map(c => c.trim()).filter(c => c.length > 0);
+        await supabase.from('bot_sessions').update({ column_names: cols, step: 'ASK_PERMANENT_CHOICE' }).eq('chat_id', chatId);
+        const buttons = cols.map(col => [Markup.button.callback(`📌 ${col} পার্মানেন্ট করুন`, `make_perm_${col}`)]);
+        buttons.push([Markup.button.callback('⏭️ কোনোটিই নয় (ডাটা এন্ট্রি শুরু)', 'skip_permanent')]);
+        return ctx.reply('✨ কলাম সেটআপ সফল!', Markup.inlineKeyboard(buttons));
+    }
+
+    if (session.step === 'DATA_ENTRY') {
+        const cols = session.column_names;
+        let colName = cols[session.current_column_idx];
+        session.current_row_data[colName] = text;
+        session.current_column_idx++;
+        session = moveToNextColumn(session);
+
+        if (session.current_column_idx >= cols.length) {
+            session.data.push(session.current_row_data);
+            const rowCount = session.data.length;
+            session.current_row_data = {};
+            session.current_column_idx = 0;
+            session = moveToNextColumn(session);
+            await supabase.from('bot_sessions').update({ current_column_idx: session.current_column_idx, current_row_data: session.current_row_data, data: session.data }).eq('chat_id', chatId);
+
+            return ctx.reply(`✅ *Row ${rowCount} সেভ হয়েছে!*\n👉 *পরবর্তী Row এর জন্য [ ${cols[session.current_column_idx]} ] দিন:*`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '💾 Save XLSX', callback_data: 'export_xlsx' }, { text: '🏠 মেইন মেনু', callback_data: 'main_menu' }]]}});
+        }
+        await supabase.from('bot_sessions').update({ current_column_idx: session.current_column_idx, current_row_data: session.current_row_data }).eq('chat_id', chatId);
+        return ctx.reply(`👉 এবার দিন [ ${cols[session.current_column_idx]} ]:`);
+    }
 });
 
-// 🔥 কনফার্ম উইথড্রল অ্যাকশন 🔥
+// 🔥 কনফার্ম উইথড্রল অ্যাকশন (Fixed Inline Keyboard Format) 🔥
 bot.action('confirm_withdraw', async (ctx) => {
-    ctx.answerCbQuery().catch(()=>{});
+    ctx.answerCbQuery('Processing...').catch(()=>{});
     const { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', ctx.chat.id).single();
     if (session.step !== 'CONFIRM_WITHDRAWAL') return;
 
@@ -226,20 +229,37 @@ bot.action('confirm_withdraw', async (ctx) => {
     await supabase.from('bot_sessions').update({ step: 'MAIN_MENU', edit_target: {} }).eq('chat_id', ctx.chat.id);
 
     const bdt = (amount * USD_TO_BDT).toFixed(2);
-    const channelMsg = `🚨 *New Withdrawal Request*\n\n👤 *User ID:* \`${ctx.chat.id}\`\n🗣 *Name:* ${ctx.from.first_name}\n🏦 *Wallet:* ${wData.walletType}\n📱 *Number:* \`${wData.walletNumber}\`\n💵 *Amount:* $${amount} (*${bdt} BDT*)`;
+    // নিরাপদভাবে ইউজারের নাম নেওয়া
+    const safeName = (ctx.from.first_name || 'User').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&'); 
 
+    const channelMsg = `🚨 *New Withdrawal Request*\n\n`
+                     + `👤 *User ID:* \`${ctx.chat.id}\`\n`
+                     + `🗣 *Name:* ${safeName}\n`
+                     + `🏦 *Wallet:* ${wData.walletType}\n`
+                     + `📱 *Number:* \`${wData.walletNumber}\`\n`
+                     + `💵 *Amount:* $${amount} (*${bdt} BDT*)`;
+
+    // 🎯 ফিক্সড ইনলাইন বাটন ফরম্যাট
     await bot.telegram.sendMessage(WITHDRAW_CHANNEL, channelMsg, {
-        reply_markup: { inline_keyboard: [[[Markup.button.callback('✅ Approve', `wapp_${ctx.chat.id}_${amount}`), Markup.button.callback('❌ Reject', `wrej_${ctx.chat.id}_${amount}`)]]] }
-    }).catch(()=>{});
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: '✅ Approve', callback_data: `wapp_${ctx.chat.id}_${amount}` },
+                    { text: '❌ Reject', callback_data: `wrej_${ctx.chat.id}_${amount}` }
+                ]
+            ]
+        }
+    }).catch(console.error); // এরর হলে কনসোলে দেখাবে
 
-    ctx.reply('✅ *রিকোয়েস্ট সাবমিট হয়েছে!* অ্যাডমিন চেক করার পর আপনার ফোনে টাকা চলে যাবে।');
+    ctx.reply('✅ *আপনার রিকোয়েস্ট সফলভাবে সাবমিট হয়েছে!*\nঅ্যাডমিন চেক করে টাকা পাঠিয়ে দিলে আপনি নোটিফিকেশন পেয়ে যাবেন।', {parse_mode: 'Markdown'});
 });
 
 // Channels approval handling
 bot.action(/^wapp_(\d+)_([\d.]+)$/, async (ctx) => {
     const userId = ctx.match[1]; const amountUSD = ctx.match[2];
     await ctx.editMessageText(`${ctx.callbackQuery.message.text}\n\n✅ *Status:* Approved`, { parse_mode: 'Markdown' });
-    bot.telegram.sendMessage(userId, `🎉 *উইথড্রল সাকসেস!*\nআপনার $${amountUSD} উইথড্রল রিকোয়েস্টটি অ্যাপ্রুভ হয়েছে।`, {parse_mode: 'Markdown'}).catch(()=>{});
+    bot.telegram.sendMessage(userId, `🎉 *অভিনন্দন!*\nআপনার $${amountUSD} উইথড্রল রিকোয়েস্টটি সফলভাবে অ্যাপ্রুভ হয়েছে এবং টাকা আপনার ওয়ালেটে পাঠিয়ে দেওয়া হয়েছে।`, {parse_mode: 'Markdown'}).catch(()=>{});
 });
 
 bot.action(/^wrej_(\d+)_([\d.]+)$/, async (ctx) => {
@@ -261,11 +281,20 @@ bot.action(/^wrzn_(\d+)_([\d.]+)_([a-zA-Z]+)$/, async (ctx) => {
     bot.telegram.sendMessage(userId, `⚠️ *উইথড্রল বাতিল!*\n$${amountUSD} ব্যালেন্স রিফান্ড করা হয়েছে।\n*কারণ:* ${txt}`).catch(()=>{});
 });
 
-// Voltxsms Number/OTP triggers (পূর্বের পার্ট বহাল আছে)...
+// Voltxsms Number/OTP triggers
+bot.hears('📱 Get Number (OTP)', async (ctx) => {
+    ctx.reply('🌐 *কোন প্যানেল থেকে ফেসবুকের নাম্বার নিতে চান?*', { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '⚡ Voltxsms Panel', callback_data: 'voltx_menu' }]] } });
+});
+
 bot.action('voltx_menu', async (ctx) => {
-    let fbRanges = ['23275', '447', '22501']; 
-    const buttons = fbRanges.map(r => [Markup.button.callback(`🔥 ${r}XXX (Active)`, `v_get_${r}`)]);
-    ctx.reply('🔥 *এক্টিভ রেঞ্জগুলো:*', Markup.inlineKeyboard(buttons));
+    ctx.answerCbQuery().catch(()=>{});
+    try {
+        const res = await fetch(`${VOLTX_BASE}/liveaccess`, { headers: await getVoltxHeaders() });
+        const data = await res.json();
+        let fbRanges = ['23275', '447', '22501']; 
+        const buttons = fbRanges.map(r => [Markup.button.callback(`🔥 ${r}XXX (Active)`, `v_get_${r}`)]);
+        ctx.reply('🔥 *এক্টিভ রেঞ্জগুলো:*', Markup.inlineKeyboard(buttons));
+    } catch(e) { ctx.reply('❌ API Error'); }
 });
 
 bot.action(/^v_get_(.+)$/, async (ctx) => {
@@ -298,10 +327,27 @@ bot.action(/^v_otp_(.+)$/, async (ctx) => {
                 await ctx.replyWithMarkdown(`🎉 *কোড পাওয়া গেছে!*\n\n📱 *Number:* \`${fullNum}\`\n🔑 *Code:* \`${code}\``);
                 const maskedNum = "******" + fullNum.slice(-4);
                 await bot.telegram.sendMessage(OTP_CHANNEL, `🔥 *New Facebook Code!*\n📱 *Number:* \`${maskedNum}\`\n🔑 *Code:* \`${code}\``, { parse_mode: 'Markdown' }).catch(()=>{});
-            } else ctx.reply('⏳ কোড আসেনি।');
-        } else ctx.reply('⏳ কোড আসেনি।');
-    } catch (e) { ctx.reply('❌ সমস্যা।'); }
+            } else ctx.reply('⏳ এখনো কোনো কোড আসেনি।');
+        } else ctx.reply('⏳ কোড এখনো রিসিভ হয়নি।');
+    } catch (e) { ctx.reply('❌ সার্ভার সমস্যা।'); }
 });
+
+bot.action('skip_permanent', async (ctx) => {
+    let { data: session } = await supabase.from('bot_sessions').select('*').eq('chat_id', ctx.chat.id).single();
+    session.step = 'DATA_ENTRY'; session.current_column_idx = 0; session.current_row_data = {};
+    while (session.current_column_idx < session.column_names.length) {
+        const cName = session.column_names[session.current_column_idx];
+        if (session.permanent_settings[cName] !== undefined) {
+            session.current_row_data[cName] = session.permanent_settings[cName];
+            session.current_column_idx++;
+        } else break;
+    }
+    await supabase.from('bot_sessions').update({ step: session.step, current_column_idx: session.current_column_idx, current_row_data: session.current_row_data }).eq('chat_id', ctx.chat.id);
+    ctx.answerCbQuery();
+    ctx.reply(`🚀 *ডাটা এন্ট্রি শুরু!*\n\n👉 প্রথম Row এর জন্য [ ${session.column_names[session.current_column_idx]} ] দিন:`, {parse_mode: 'Markdown'});
+});
+
+bot.action('export_xlsx', async (ctx) => { /* Excel logic */ ctx.reply('ফাইল তৈরি হচ্ছে...'); });
 
 module.exports = async function handler(req, res) {
     if (req.method === 'POST') {
