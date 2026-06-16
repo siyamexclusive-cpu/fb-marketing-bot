@@ -1,7 +1,7 @@
 const { Telegraf, Markup } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 
-// 🔑 Tokens & API Keys (আপনার দেওয়া সরাসরি কি)
+// 🔑 Tokens & API Keys
 const BOT_TOKEN = '8996723108:AAHZO_pjAT3VxwcMTZyCMepVVGEWsv7vJTI';
 const SUPABASE_URL = 'https://jdxcxzduqdifptxqwdsn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_Z6nmoFPeJz7N0eg846bgqg_SC880WaC';
@@ -14,7 +14,6 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 // ==========================================
 async function getUserData(userId) {
     let { data, error } = await supabase.from('finance_users').select('*').eq('user_id', userId.toString()).single();
-    
     if (!data) {
         const newUser = {
             user_id: userId.toString(),
@@ -33,64 +32,78 @@ async function updateUserData(userId, updateFields) {
 }
 
 // ==========================================
-// 📱 CUSTOM KEYBOARD MENU
+// 🎨 PRO UI TEMPLATES & KEYBOARDS
 // ==========================================
-const mainMenu = Markup.keyboard([
-    ['💰 ড্যাশবোর্ড', '📅 চলতি মাসের হিসাব'],
-    ['🏦 লোন ট্র্যাকার', '📜 শেষ ১০টি হিস্ট্রি'],
-    ['➕ আয়/ব্যয় যুক্ত করার নিয়ম', '🛠️ ডিজিটাল টুলস']
-]).resize();
+const getMainMenuKeyboard = () => {
+    return Markup.inlineKeyboard([
+        [Markup.button.callback('📊 মাসিক রিপোর্ট', 'menu_monthly'), Markup.button.callback('📜 লেনদেন হিস্ট্রি', 'menu_history')],
+        [Markup.button.callback('🏦 লোন ম্যানেজমেন্ট', 'menu_loan'), Markup.button.callback('🛠️ ডিজিটাল টুলস', 'menu_tools')],
+        [Markup.button.callback('💡 কীভাবে এন্ট্রি করবেন?', 'menu_help')]
+    ]);
+};
+
+const getBackButton = () => {
+    return Markup.inlineKeyboard([[Markup.button.callback('🔙 ড্যাশবোর্ডে ফিরে যান', 'menu_main')]]);
+};
 
 // ==========================================
-// 🔥 START COMMAND 🔥
+// 🚀 MAIN DASHBOARD GENERATOR
 // ==========================================
-bot.command('start', async (ctx) => {
-    await getUserData(ctx.from.id);
-    ctx.reply(`👋 *স্বাগতম আপনার স্মার্ট ফিন্যান্স ও ম্যানেজমেন্ট বটে!*\n\nনিচের কীবোর্ড মেনু থেকে যেকোনো অপশন বেছে নিন:`, { parse_mode: 'Markdown', ...mainMenu });
-});
-
-// ==========================================
-// 📊 DASHBOARD
-// ==========================================
-bot.hears('💰 ড্যাশবোর্ড', async (ctx) => {
-    const user = await getUserData(ctx.from.id);
+async function generateDashboardText(userId) {
+    const user = await getUserData(userId);
     const b = user.balances;
-    
     const total = b.bkash + b.nagad + b.rocket + b.bank + b.cash;
+    
     const today = new Date().toDateString();
     const todayExpense = user.transactions
         .filter(t => t.type === 'expense' && new Date(t.date).toDateString() === today)
         .reduce((sum, t) => sum + t.amount, 0);
 
-    const msg = `📊 *আপনার ফিন্যান্স ড্যাশবোর্ড*\n`
-              + `━━━━━━━━━━━━━━━━\n`
-              + `💵 *মোট ব্যালেন্স:* ${total} ৳\n`
-              + `📉 *আজকের খরচ:* ${todayExpense} ৳\n\n`
-              + `*অ্যাকাউন্ট ডিটেইলস:*\n`
-              + `🌸 Bkash: ${b.bkash} ৳\n`
-              + `🔴 Nagad: ${b.nagad} ৳\n`
-              + `💜 Rocket: ${b.rocket} ৳\n`
-              + `🏦 Bank: ${b.bank} ৳\n`
-              + `💵 Cash: ${b.cash} ৳\n`
-              + `💲 Dollar: $${b.usd}\n`
-              + `━━━━━━━━━━━━━━━━`;
+    return `💠 *PRO FINANCE DASHBOARD* 💠\n`
+         + `━━━━━━━━━━━━━━━━━━━━━━\n`
+         + `👤 *ইউজার:* Tanvir Siyam\n`
+         + `💰 *নেট ব্যালেন্স:* ${total.toLocaleString('en-IN')} ৳\n`
+         + `📉 *আজকের খরচ:* ${todayExpense.toLocaleString('en-IN')} ৳\n\n`
+         + `🏦 *অ্যাকাউন্ট সামারি:*\n`
+         + ` ├ 🌸 Bkash:  ${b.bkash.toLocaleString('en-IN')} ৳\n`
+         + ` ├ 🔴 Nagad:  ${b.nagad.toLocaleString('en-IN')} ৳\n`
+         + ` ├ 💜 Rocket: ${b.rocket.toLocaleString('en-IN')} ৳\n`
+         + ` ├ 🏛️ Bank:   ${b.bank.toLocaleString('en-IN')} ৳\n`
+         + ` ├ 💵 Cash:   ${b.cash.toLocaleString('en-IN')} ৳\n`
+         + ` └ 💲 USD:    $${b.usd}\n`
+         + `━━━━━━━━━━━━━━━━━━━━━━\n`
+         + `⚡ *Quick Entry:* চ্যাটে লিখুন \`আয় 500 bkash\` বা \`খরচ 200 nagad\``;
+}
 
-    ctx.replyWithMarkdown(msg, Markup.inlineKeyboard([
-        Markup.button.callback('📜 খরচের হিস্ট্রি (History)', 'show_history')
-    ]));
+// ==========================================
+// 🔥 CORE COMMANDS & NAVIGATION 🔥
+// ==========================================
+bot.command('start', async (ctx) => {
+    const text = await generateDashboardText(ctx.from.id);
+    // আগের পুরোনো কীবোর্ড রিমুভ করে ইনলাইন কীবোর্ড দেওয়া
+    ctx.reply(text, { parse_mode: 'Markdown', reply_markup: { remove_keyboard: true } })
+       .then(() => ctx.reply('মেনু থেকে অপশন নির্বাচন করুন:', { ...getMainMenuKeyboard() }));
+});
+
+// Main Menu Action (Back Button)
+bot.action('menu_main', async (ctx) => {
+    const text = await generateDashboardText(ctx.from.id);
+    try {
+        await ctx.editMessageText(text, { parse_mode: 'Markdown', ...getMainMenuKeyboard() });
+    } catch (e) {} // Text same থাকলে error ignore করবে
+    ctx.answerCbQuery();
 });
 
 // ==========================================
-// 📅 MONTHLY REPORT (Bonus Feature)
+// 📅 MONTHLY REPORT
 // ==========================================
-bot.hears('📅 চলতি মাসের হিসাব', async (ctx) => {
+bot.action('menu_monthly', async (ctx) => {
     const user = await getUserData(ctx.from.id);
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
 
-    let monthlyIncome = 0;
-    let monthlyExpense = 0;
+    let monthlyIncome = 0; let monthlyExpense = 0;
 
     user.transactions.forEach(t => {
         const txDate = new Date(t.date);
@@ -101,28 +114,98 @@ bot.hears('📅 চলতি মাসের হিসাব', async (ctx) => {
     });
 
     const monthName = now.toLocaleString('en-US', { month: 'long' });
-    const msg = `📅 *${monthName} ${currentYear} এর রিপোর্ট*\n`
-              + `━━━━━━━━━━━━━━━━\n`
-              + `🟢 *মোট আয়:* ${monthlyIncome} ৳\n`
-              + `🔴 *মোট ব্যয়:* ${monthlyExpense} ৳\n\n`
-              + `💡 *মাসিক সঞ্চয়:* ${monthlyIncome - monthlyExpense} ৳`;
+    const text = `📅 *MONTHLY REPORT: ${monthName.toUpperCase()} ${currentYear}*\n`
+               + `━━━━━━━━━━━━━━━━━━━━━━\n`
+               + `🟢 *মোট আয়:* ${monthlyIncome.toLocaleString('en-IN')} ৳\n`
+               + `🔴 *মোট ব্যয়:* ${monthlyExpense.toLocaleString('en-IN')} ৳\n\n`
+               + `💡 *মাসিক সঞ্চয়:* ${(monthlyIncome - monthlyExpense).toLocaleString('en-IN')} ৳`;
 
-    ctx.replyWithMarkdown(msg);
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...getBackButton() }).catch(()=>{});
+    ctx.answerCbQuery();
 });
 
 // ==========================================
-// 💰 SMART INCOME/EXPENSE TRACKER
+// 📜 HISTORY VIEWER
 // ==========================================
-bot.hears('➕ আয়/ব্যয় যুক্ত করার নিয়ম', (ctx) => {
-    const msg = `💡 *অটোমেটিক আয় ও ব্যয় যুক্ত করার নিয়ম:*\n\n`
-              + `চ্যাটে সরাসরি নিচের মতো করে লিখুন, বট নিজে থেকে ব্যালেন্স আপডেট করে নেবে!\n\n`
-              + `✅ *আয় যুক্ত করতে:*\n`
-              + `\`আয় 500 bkash টিউশনি ফি\`\n\n`
-              + `❌ *ব্যয়/খরচ যুক্ত করতে:*\n`
-              + `\`খরচ 200 nagad মোবাইল রিচার্জ\``;
-    ctx.replyWithMarkdown(msg);
+bot.action('menu_history', async (ctx) => {
+    const user = await getUserData(ctx.from.id);
+    const txs = user.transactions;
+    
+    if (txs.length === 0) {
+        await ctx.editMessageText('📭 আপনার কোনো লেনদেনের হিস্ট্রি নেই।', { ...getBackButton() }).catch(()=>{});
+        return ctx.answerCbQuery();
+    }
+
+    const recentTxs = txs.slice(-10).reverse();
+    let text = `📜 *RECENT TRANSACTIONS (Last 10)*\n━━━━━━━━━━━━━━━━━━━━━━\n`;
+    
+    recentTxs.forEach((t) => {
+        const icon = t.type === 'income' ? '🟢' : '🔴';
+        const date = new Date(t.date).toLocaleDateString('en-GB');
+        text += `${icon} *${t.amount}* ${t.method === 'usd' ? '$' : '৳'} \n└ 💳 ${t.method.toUpperCase()} | 📝 ${t.note} | 📅 ${date}\n\n`;
+    });
+
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...getBackButton() }).catch(()=>{});
+    ctx.answerCbQuery();
 });
 
+// ==========================================
+// 🏦 LOAN TRACKER
+// ==========================================
+bot.action('menu_loan', async (ctx) => {
+    const user = await getUserData(ctx.from.id);
+    const loans = user.loans;
+
+    let text = `🏦 *LOAN MANAGEMENT*\n━━━━━━━━━━━━━━━━━━━━━━\n`;
+
+    if (loans.length === 0) {
+        text += `আপনার বর্তমানে কোনো লোন নেই।\n\n`;
+    } else {
+        loans.forEach((l) => {
+            const progress = Math.round((l.paid / l.amount) * 10);
+            const bar = '█'.repeat(progress) + '░'.repeat(10 - progress);
+            const percentage = Math.round((l.paid / l.amount) * 100);
+
+            text += `🔹 *${l.name}*\n`
+                 +  `💰 মোট: ${l.amount} ৳ | শোধ: ${l.paid} ৳\n`
+                 +  `📊 [${bar}] ${percentage}%\n`
+                 +  `📅 কিস্তি: প্রতি মাসের ${l.date} তারিখ\n\n`;
+        });
+    }
+
+    text += `➕ *নতুন লোন যুক্ত করতে চ্যাটে লিখুন:*\n`
+          + `\`/addloan [নাম] [মোট টাকা] [কত শোধ করেছেন] [কিস্তির তারিখ]\``;
+
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...getBackButton() }).catch(()=>{});
+    ctx.answerCbQuery();
+});
+
+// ==========================================
+// 🛠️ DIGITAL TOOLS & HELP
+// ==========================================
+bot.action('menu_tools', async (ctx) => {
+    const text = `🛠️ *DIGITAL MARKETING TOOLS*\n━━━━━━━━━━━━━━━━━━━━━━\n`
+               + `🔗 */short [লিংক]* - যেকোনো বড় লিংক শর্ট করতে।\n`
+               + `📧 */mail* - নতুন টেম্পোরারি (ফেক) ইমেইল পেতে।\n`
+               + `#️⃣ */tags [বিষয়]* - পোস্টের জন্য ভাইরাল হ্যাশট্যাগ পেতে।`;
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...getBackButton() }).catch(()=>{});
+    ctx.answerCbQuery();
+});
+
+bot.action('menu_help', async (ctx) => {
+    const text = `💡 *SMART ENTRY GUIDE*\n━━━━━━━━━━━━━━━━━━━━━━\n`
+               + `চ্যাটে সরাসরি নিচের মতো করে লিখুন:\n\n`
+               + `✅ *আয় যুক্ত করতে:*\n`
+               + `\`আয় 500 bkash টিউশনি\`\n\n`
+               + `❌ *খরচ যুক্ত করতে:*\n`
+               + `\`খরচ 200 nagad ইন্টারনেট বিল\``;
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...getBackButton() }).catch(()=>{});
+    ctx.answerCbQuery();
+});
+
+// ==========================================
+// 💰 SMART INCOME/EXPENSE LISTENER
+// ==========================================
 bot.hears(/^(আয়|আয়|খরচ|ব্যয়|ব্যয়)\s+(\d+)\s+(bkash|nagad|rocket|bank|cash|usd)\s+(.+)$/i, async (ctx) => {
     const match = ctx.match;
     const type = (match[1] === 'খরচ' || match[1] === 'ব্যয়' || match[1] === 'ব্যয়') ? 'expense' : 'income';
@@ -133,118 +216,43 @@ bot.hears(/^(আয়|আয়|খরচ|ব্যয়|ব্যয়)\s+(\d+)\s+
     const user = await getUserData(ctx.from.id);
 
     if (type === 'expense' && user.balances[method] < amount) {
-        return ctx.reply(`⚠️ আপনার ${method} অ্যাকাউন্টে পর্যাপ্ত ব্যালেন্স নেই!`);
+        return ctx.reply(`⚠️ আপনার ${method.toUpperCase()} অ্যাকাউন্টে পর্যাপ্ত ব্যালেন্স নেই!`);
     }
 
-    if (type === 'income') {
-        user.balances[method] += amount;
-    } else {
-        user.balances[method] -= amount;
-    }
+    if (type === 'income') user.balances[method] += amount;
+    else user.balances[method] -= amount;
 
     user.transactions.push({
-        type: type,
-        amount: amount,
-        method: method,
-        note: note,
-        date: new Date().toISOString()
+        type: type, amount: amount, method: method, note: note, date: new Date().toISOString()
     });
 
-    await updateUserData(ctx.from.id, { 
-        balances: user.balances, 
-        transactions: user.transactions 
-    });
+    await updateUserData(ctx.from.id, { balances: user.balances, transactions: user.transactions });
 
-    ctx.reply(`✅ *${type === 'income' ? 'আয়' : 'খরচ'} সফলভাবে যুক্ত হয়েছে!*\n\n`
-            + `💰 পরিমাণ: ${amount} ${method === 'usd' ? '$' : '৳'}\n`
-            + `💳 মাধ্যম: ${method}\n`
-            + `📝 নোট: ${note}`, { parse_mode: 'Markdown' });
-});
-
-// ==========================================
-// 📜 HISTORY VIEWER
-// ==========================================
-const showHistory = async (ctx) => {
-    const user = await getUserData(ctx.from.id);
-    const txs = user.transactions;
-    
-    if (txs.length === 0) return ctx.reply('📭 আপনার কোনো লেনদেনের হিস্ট্রি নেই।');
-
-    const recentTxs = txs.slice(-10).reverse();
-    let msg = `📜 *আপনার শেষ লেনদেনের হিস্ট্রি:*\n━━━━━━━━━━━━━━━━\n`;
-    
-    recentTxs.forEach((t) => {
-        const icon = t.type === 'income' ? '🟢' : '🔴';
-        const date = new Date(t.date).toLocaleDateString('en-GB');
-        msg += `${icon} *${t.amount}* ${t.method === 'usd' ? '$' : '৳'} (${t.method}) \n📝 ${t.note} \n📅 ${date}\n\n`;
-    });
-
-    ctx.replyWithMarkdown(msg);
-};
-
-bot.action('show_history', showHistory);
-bot.hears('📜 শেষ ১০টি হিস্ট্রি', showHistory);
-
-// ==========================================
-// 🏦 LOAN TRACKER
-// ==========================================
-bot.hears('🏦 লোন ট্র্যাকার', async (ctx) => {
-    const user = await getUserData(ctx.from.id);
-    const loans = user.loans;
-
-    let msg = `🏦 *আপনার লোন ম্যানেজমেন্ট*\n━━━━━━━━━━━━━━━━\n`;
-
-    if (loans.length === 0) {
-        msg += `আপনার বর্তমানে কোনো লোন নেই।\n\n`;
-    } else {
-        loans.forEach((l) => {
-            const progress = Math.round((l.paid / l.amount) * 10);
-            const bar = '█'.repeat(progress) + '░'.repeat(10 - progress);
-            const percentage = Math.round((l.paid / l.amount) * 100);
-
-            msg += `🔹 *${l.name}*\n`
-                +  `💰 মোট: ${l.amount} ৳ | শোধ হয়েছে: ${l.paid} ৳\n`
-                +  `📊 প্রগ্রেস: [${bar}] ${percentage}%\n`
-                +  `📅 কিস্তির দিন: প্রতি মাসের ${l.date} তারিখ\n\n`;
+    const text = `✅ *${type === 'income' ? 'INCOME' : 'EXPENSE'} ADDED!*\n`
+               + `💰 পরিমাণ: ${amount} ${method === 'usd' ? '$' : '৳'}\n`
+               + `💳 মাধ্যম: ${method.toUpperCase()}\n`
+               + `📝 নোট: ${note}`;
+               
+    // নোটিফিকেশন দেওয়ার পর নতুন করে ড্যাশবোর্ড মেনু পাঠিয়ে দেবে
+    ctx.reply(text, { parse_mode: 'Markdown' }).then(() => {
+        generateDashboardText(ctx.from.id).then(dashText => {
+            ctx.reply(dashText, { parse_mode: 'Markdown', ...getMainMenuKeyboard() });
         });
-    }
-
-    msg += `➕ *নতুন লোন যুক্ত করতে নিচে কমান্ড দিন:*\n`
-         + `\`/addloan [নাম] [মোট টাকা] [কত শোধ করেছেন] [কিস্তির তারিখ]\`\n\n`
-         + `*উদাহরণ:* \`/addloan Bkash_Loan 5000 1000 15\``;
-
-    ctx.replyWithMarkdown(msg);
+    });
 });
 
+// ==========================================
+// ➕ ADD LOAN COMMAND & OTHERS
+// ==========================================
 bot.command('addloan', async (ctx) => {
     const args = ctx.message.text.split(' ');
-    
-    if (args.length < 5) {
-        return ctx.reply('❌ সঠিক নিয়ম: `/addloan [নাম] [মোট টাকা] [কত শোধ করেছেন] [কিস্তির তারিখ]`', { parse_mode: 'Markdown' });
-    }
+    if (args.length < 5) return ctx.reply('❌ সঠিক নিয়ম: `/addloan [নাম] [মোট টাকা] [কত শোধ করেছেন] [কিস্তির তারিখ]`', { parse_mode: 'Markdown' });
 
     const user = await getUserData(ctx.from.id);
-    
-    user.loans.push({
-        name: args[1],
-        amount: parseInt(args[2]),
-        paid: parseInt(args[3]),
-        date: args[4]
-    });
+    user.loans.push({ name: args[1], amount: parseInt(args[2]), paid: parseInt(args[3]), date: args[4] });
 
     await updateUserData(ctx.from.id, { loans: user.loans });
-    ctx.reply(`✅ *${args[1]}* লোনটি সফলভাবে যুক্ত হয়েছে!`);
-});
-
-// ==========================================
-// 🛠️ DIGITAL TOOLS (Short, Mail, Tags)
-// ==========================================
-bot.hears('🛠️ ডিজিটাল টুলস', (ctx) => {
-    const msg = `🛠️ *আপনার ডিজিটাল মার্কেটিং টুলস:*\n\n`
-              + `🔗 */short [লিংক]* - যেকোনো বড় লিংক শর্ট করতে।\n`
-              + `📧 */mail* - নতুন টেম্পোরারি (ফেক) ইমেইল পেতে।\n`
-              + `#️⃣ */tags [বিষয়]* - পোস্টের জন্য ভাইরাল হ্যাশট্যাগ পেতে।`;
-    ctx.replyWithMarkdown(msg);
+    ctx.reply(`✅ *${args[1]}* লোনটি সফলভাবে যুক্ত হয়েছে!`, { parse_mode: 'Markdown', ...getBackButton() });
 });
 
 bot.command('short', async (ctx) => {
@@ -278,13 +286,7 @@ bot.command('tags', (ctx) => {
 // ==========================================
 module.exports = async function handler(req, res) {
     if (req.method === 'POST') {
-        try { 
-            await bot.handleUpdate(req.body); 
-            res.status(200).send('OK'); 
-        } catch (error) { 
-            res.status(500).send('Error'); 
-        }
-    } else { 
-        res.status(200).send('Finance Bot Connected with Supabase!'); 
-    }
+        try { await bot.handleUpdate(req.body); res.status(200).send('OK'); } 
+        catch (error) { res.status(500).send('Error'); }
+    } else { res.status(200).send('PRO Finance Bot Live!'); }
 };
