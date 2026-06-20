@@ -1,9 +1,11 @@
 {
-  "name": "finance-bot",
+  "name": "siyam-pro-otp-bot",
   "version": "1.0.0",
+  "description": "Premium OTP Bypass Bot",
   "main": "api/webhook.js",
   "dependencies": {
     "telegraf": "^4.15.0",
-    "@supabase/supabase-js": "^2.39.0"
+    "@supabase/supabase-js": "^2.39.0",
+    "node-fetch": "^3.3.2"
   }
 }
