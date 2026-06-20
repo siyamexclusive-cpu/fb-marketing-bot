@@ -1,292 +1,264 @@
 const { Telegraf, Markup } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 
-// 🔑 Tokens & API Keys
-const BOT_TOKEN = '8996723108:AAHZO_pjAT3VxwcMTZyCMepVVGEWsv7vJTI';
-const SUPABASE_URL = 'https://jdxcxzduqdifptxqwdsn.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_Z6nmoFPeJz7N0eg846bgqg_SC880WaC';
+// ==========================================
+// 🔑 ALL API KEYS & CONFIGURATIONS
+// ==========================================
+const BOT_TOKEN = '8571540558:AAHv9KuMbl-Ct-yWZNJKXUxBCqdNHKSBPlA';
+const ADMIN_ID = '5968392734';
+const CHANNEL_ID = '@siyamXotp'; 
+
+const SUPABASE_URL = 'https://ocrhnssxamusvlnkvzwn.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_3pT3XXRD3kvRq2b5vZZjeA_JRsTQhOg';
+
+const STEX_API_KEY = 'M704VEUDSZ3';
+const STEX_BASE_URL = 'https://api.2oo9.cloud/MXS47FLFX0U/tness/@public/api';
 
 const bot = new Telegraf(BOT_TOKEN);
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+const STEX_HEADERS = { 'mauthapi': STEX_API_KEY, 'Content-Type': 'application/json' };
+
 // ==========================================
-// 🗄️ SUPABASE DATABASE FUNCTIONS
+// 🗄️ DATABASE HELPERS
 // ==========================================
-async function getUserData(userId) {
-    let { data, error } = await supabase.from('finance_users').select('*').eq('user_id', userId.toString()).single();
+async function getUser(userId, username) {
+    let { data } = await supabase.from('stex_users').select('*').eq('user_id', userId.toString()).single();
     if (!data) {
-        const newUser = {
-            user_id: userId.toString(),
-            balances: { bkash: 0, nagad: 0, rocket: 0, bank: 0, cash: 0, usd: 0 },
-            transactions: [],
-            loans: []
-        };
-        await supabase.from('finance_users').insert([newUser]);
-        return newUser;
+        data = { user_id: userId.toString(), username: username || 'User', current_prefix: null, status: 'idle', total_otps: 0 };
+        await supabase.from('stex_users').insert([data]);
     }
     return data;
 }
 
-async function updateUserData(userId, updateFields) {
-    await supabase.from('finance_users').update(updateFields).eq('user_id', userId.toString());
+async function updateUser(userId, updates) {
+    await supabase.from('stex_users').update(updates).eq('user_id', userId.toString());
 }
 
 // ==========================================
-// 🎨 PRO UI TEMPLATES & KEYBOARDS
+// 📱 BOTTOM KEYBOARD (MAIN MENU)
 // ==========================================
-const getMainMenuKeyboard = () => {
-    return Markup.inlineKeyboard([
-        [Markup.button.callback('📊 মাসিক রিপোর্ট', 'menu_monthly'), Markup.button.callback('📜 লেনদেন হিস্ট্রি', 'menu_history')],
-        [Markup.button.callback('🏦 লোন ম্যানেজমেন্ট', 'menu_loan'), Markup.button.callback('🛠️ ডিজিটাল টুলস', 'menu_tools')],
-        [Markup.button.callback('💡 কীভাবে এন্ট্রি করবেন?', 'menu_help')]
-    ]);
-};
-
-const getBackButton = () => {
-    return Markup.inlineKeyboard([[Markup.button.callback('🔙 ড্যাশবোর্ডে ফিরে যান', 'menu_main')]]);
-};
+const mainMenu = Markup.keyboard([
+    ['📱 Get Number', '🌐 Live Traffic'],
+    ['👤 My Profile', '💳 Balance & Withdraw']
+]).resize();
 
 // ==========================================
-// 🚀 MAIN DASHBOARD GENERATOR
-// ==========================================
-async function generateDashboardText(userId) {
-    const user = await getUserData(userId);
-    const b = user.balances;
-    const total = b.bkash + b.nagad + b.rocket + b.bank + b.cash;
-    
-    const today = new Date().toDateString();
-    const todayExpense = user.transactions
-        .filter(t => t.type === 'expense' && new Date(t.date).toDateString() === today)
-        .reduce((sum, t) => sum + t.amount, 0);
-
-    return `💠 *PRO FINANCE DASHBOARD* 💠\n`
-         + `━━━━━━━━━━━━━━━━━━━━━━\n`
-         + `👤 *ইউজার:* Tanvir Siyam\n`
-         + `💰 *নেট ব্যালেন্স:* ${total.toLocaleString('en-IN')} ৳\n`
-         + `📉 *আজকের খরচ:* ${todayExpense.toLocaleString('en-IN')} ৳\n\n`
-         + `🏦 *অ্যাকাউন্ট সামারি:*\n`
-         + ` ├ 🌸 Bkash:  ${b.bkash.toLocaleString('en-IN')} ৳\n`
-         + ` ├ 🔴 Nagad:  ${b.nagad.toLocaleString('en-IN')} ৳\n`
-         + ` ├ 💜 Rocket: ${b.rocket.toLocaleString('en-IN')} ৳\n`
-         + ` ├ 🏛️ Bank:   ${b.bank.toLocaleString('en-IN')} ৳\n`
-         + ` ├ 💵 Cash:   ${b.cash.toLocaleString('en-IN')} ৳\n`
-         + ` └ 💲 USD:    $${b.usd}\n`
-         + `━━━━━━━━━━━━━━━━━━━━━━\n`
-         + `⚡ *Quick Entry:* চ্যাটে লিখুন \`আয় 500 bkash\` বা \`খরচ 200 nagad\``;
-}
-
-// ==========================================
-// 🔥 CORE COMMANDS & NAVIGATION 🔥
+// 🚀 BOT START & CORE COMMANDS
 // ==========================================
 bot.command('start', async (ctx) => {
-    const text = await generateDashboardText(ctx.from.id);
-    // আগের পুরোনো কীবোর্ড রিমুভ করে ইনলাইন কীবোর্ড দেওয়া
-    ctx.reply(text, { parse_mode: 'Markdown', reply_markup: { remove_keyboard: true } })
-       .then(() => ctx.reply('মেনু থেকে অপশন নির্বাচন করুন:', { ...getMainMenuKeyboard() }));
+    await getUser(ctx.from.id, ctx.from.first_name);
+    const welcomeMsg = `🌟 *Welcome to Premium OTP Bot!* 🌟\n\n`
+                     + `⚡ Superfast, Reliable & High Access OTP service.\n`
+                     + `Select an option from the menu below to get started.`;
+    ctx.reply(welcomeMsg, { parse_mode: 'Markdown', ...mainMenu });
 });
 
-// Main Menu Action (Back Button)
-bot.action('menu_main', async (ctx) => {
-    const text = await generateDashboardText(ctx.from.id);
+bot.hears('💳 Balance & Withdraw', (ctx) => {
+    ctx.reply('⏳ *Balance & Withdraw option is Coming Soon...*', { parse_mode: 'Markdown' });
+});
+
+bot.hears('👤 My Profile', async (ctx) => {
+    const user = await getUser(ctx.from.id);
+    const msg = `👤 *User Profile*\n━━━━━━━━━━━━━━━\n`
+              + `🆔 *ID:* \`${user.user_id}\`\n`
+              + `🔢 *Saved Prefix:* ${user.current_prefix ? user.current_prefix + 'XXX' : 'Not Set'}\n`
+              + `✅ *Total OTPs:* ${user.total_otps}`;
+    ctx.reply(msg, { parse_mode: 'Markdown' });
+});
+
+// ==========================================
+// 👑 SECURE ADMIN COMMANDS
+// ==========================================
+bot.command('stats', async (ctx) => {
+    if (ctx.from.id.toString() !== ADMIN_ID) return;
+    const { count } = await supabase.from('stex_users').select('*', { count: 'exact', head: true });
+    const { data } = await supabase.from('stex_users').select('total_otps');
+    const totalOtps = data.reduce((sum, u) => sum + u.total_otps, 0);
+    ctx.reply(`👑 *ADMIN DASHBOARD*\n━━━━━━━━━━━━━━━\n👥 Total Users: ${count}\n✅ Total Global OTPs: ${totalOtps}`, { parse_mode: 'Markdown' });
+});
+
+bot.command('userinfo', async (ctx) => {
+    if (ctx.from.id.toString() !== ADMIN_ID) return;
+    const targetId = ctx.message.text.split(' ')[1];
+    if (!targetId) return ctx.reply('⚠️ Use format: `/userinfo UserID`', { parse_mode: 'Markdown' });
+    
+    let { data } = await supabase.from('stex_users').select('*').eq('user_id', targetId).single();
+    if (!data) return ctx.reply('❌ User not found in database.');
+    ctx.reply(`👤 *Target User Info*\nName: ${data.username}\nPrefix: ${data.current_prefix}\nOTPs Taken: ${data.total_otps}`, { parse_mode: 'Markdown' });
+});
+
+// ==========================================
+// 🌐 LIVE TRAFFIC (CONSOLE)
+// ==========================================
+bot.hears('🌐 Live Traffic', async (ctx) => {
+    const msg = await ctx.reply('⏳ Fetching live global traffic...');
     try {
-        await ctx.editMessageText(text, { parse_mode: 'Markdown', ...getMainMenuKeyboard() });
-    } catch (e) {} // Text same থাকলে error ignore করবে
-    ctx.answerCbQuery();
-});
-
-// ==========================================
-// 📅 MONTHLY REPORT
-// ==========================================
-bot.action('menu_monthly', async (ctx) => {
-    const user = await getUserData(ctx.from.id);
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-
-    let monthlyIncome = 0; let monthlyExpense = 0;
-
-    user.transactions.forEach(t => {
-        const txDate = new Date(t.date);
-        if (txDate.getMonth() === currentMonth && txDate.getFullYear() === currentYear) {
-            if (t.type === 'income') monthlyIncome += t.amount;
-            else monthlyExpense += t.amount;
+        const res = await fetch(`${STEX_BASE_URL}/console`, { headers: STEX_HEADERS });
+        const json = await res.json();
+        
+        if (json.meta.code === 200 && json.data.hits.length > 0) {
+            let text = `📊 *LIVE GLOBAL TRAFFIC (Last 15m)*\n━━━━━━━━━━━━━━━━━━━━\n`;
+            json.data.hits.slice(0, 8).forEach(hit => {
+                text += `📲 *${hit.sid}* | Range: \`${hit.range}\`\n💬 ${hit.message.substring(0, 20)}...\n\n`;
+            });
+            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, text, { parse_mode: 'Markdown' });
+        } else {
+            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📭 No live traffic found right now.');
         }
-    });
-
-    const monthName = now.toLocaleString('en-US', { month: 'long' });
-    const text = `📅 *MONTHLY REPORT: ${monthName.toUpperCase()} ${currentYear}*\n`
-               + `━━━━━━━━━━━━━━━━━━━━━━\n`
-               + `🟢 *মোট আয়:* ${monthlyIncome.toLocaleString('en-IN')} ৳\n`
-               + `🔴 *মোট ব্যয়:* ${monthlyExpense.toLocaleString('en-IN')} ৳\n\n`
-               + `💡 *মাসিক সঞ্চয়:* ${(monthlyIncome - monthlyExpense).toLocaleString('en-IN')} ৳`;
-
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...getBackButton() }).catch(()=>{});
-    ctx.answerCbQuery();
-});
-
-// ==========================================
-// 📜 HISTORY VIEWER
-// ==========================================
-bot.action('menu_history', async (ctx) => {
-    const user = await getUserData(ctx.from.id);
-    const txs = user.transactions;
-    
-    if (txs.length === 0) {
-        await ctx.editMessageText('📭 আপনার কোনো লেনদেনের হিস্ট্রি নেই।', { ...getBackButton() }).catch(()=>{});
-        return ctx.answerCbQuery();
+    } catch (e) {
+        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '❌ Failed to connect to server.');
     }
-
-    const recentTxs = txs.slice(-10).reverse();
-    let text = `📜 *RECENT TRANSACTIONS (Last 10)*\n━━━━━━━━━━━━━━━━━━━━━━\n`;
-    
-    recentTxs.forEach((t) => {
-        const icon = t.type === 'income' ? '🟢' : '🔴';
-        const date = new Date(t.date).toLocaleDateString('en-GB');
-        text += `${icon} *${t.amount}* ${t.method === 'usd' ? '$' : '৳'} \n└ 💳 ${t.method.toUpperCase()} | 📝 ${t.note} | 📅 ${date}\n\n`;
-    });
-
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...getBackButton() }).catch(()=>{});
-    ctx.answerCbQuery();
 });
 
 // ==========================================
-// 🏦 LOAN TRACKER
+// 📱 GET NUMBER & PREFIX LOGIC
 // ==========================================
-bot.action('menu_loan', async (ctx) => {
-    const user = await getUserData(ctx.from.id);
-    const loans = user.loans;
+bot.hears('📱 Get Number', async (ctx) => {
+    const user = await getUser(ctx.from.id);
+    if (!user.current_prefix) {
+        await updateUser(ctx.from.id, { status: 'waiting_prefix' });
+        return ctx.reply('⚙️ *No Prefix Set!*\n\nPlease send the prefix range you want to use.\n*(Example: 236723XXX or 236723)*', { parse_mode: 'Markdown' });
+    }
+    sendNumberMenu(ctx, user.current_prefix);
+});
 
-    let text = `🏦 *LOAN MANAGEMENT*\n━━━━━━━━━━━━━━━━━━━━━━\n`;
+bot.action('set_prefix', async (ctx) => {
+    await updateUser(ctx.from.id, { status: 'waiting_prefix' });
+    await ctx.editMessageText('⚙️ *Enter New Prefix Range*\n\nSend the numbers (e.g. 236723XXX) in the chat:', { parse_mode: 'Markdown' }).catch(()=>{});
+});
 
-    if (loans.length === 0) {
-        text += `আপনার বর্তমানে কোনো লোন নেই।\n\n`;
+bot.on('text', async (ctx, next) => {
+    const user = await getUser(ctx.from.id);
+    if (user.status === 'waiting_prefix') {
+        // XXX বাদ দিয়ে শুধু নাম্বার ফিল্টার করা
+        const prefix = ctx.message.text.replace(/[^0-9]/g, ''); 
+        if (prefix.length < 3) return ctx.reply('❌ Invalid prefix! Try again.');
+        
+        await updateUser(ctx.from.id, { current_prefix: prefix, status: 'idle' });
+        ctx.reply(`✅ *Prefix successfully set to:* \`${prefix}XXX\``, { parse_mode: 'Markdown' });
+        sendNumberMenu(ctx, prefix);
     } else {
-        loans.forEach((l) => {
-            const progress = Math.round((l.paid / l.amount) * 10);
-            const bar = '█'.repeat(progress) + '░'.repeat(10 - progress);
-            const percentage = Math.round((l.paid / l.amount) * 100);
-
-            text += `🔹 *${l.name}*\n`
-                 +  `💰 মোট: ${l.amount} ৳ | শোধ: ${l.paid} ৳\n`
-                 +  `📊 [${bar}] ${percentage}%\n`
-                 +  `📅 কিস্তি: প্রতি মাসের ${l.date} তারিখ\n\n`;
-        });
+        return next();
     }
-
-    text += `➕ *নতুন লোন যুক্ত করতে চ্যাটে লিখুন:*\n`
-          + `\`/addloan [নাম] [মোট টাকা] [কত শোধ করেছেন] [কিস্তির তারিখ]\``;
-
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...getBackButton() }).catch(()=>{});
-    ctx.answerCbQuery();
 });
 
-// ==========================================
-// 🛠️ DIGITAL TOOLS & HELP
-// ==========================================
-bot.action('menu_tools', async (ctx) => {
-    const text = `🛠️ *DIGITAL MARKETING TOOLS*\n━━━━━━━━━━━━━━━━━━━━━━\n`
-               + `🔗 */short [লিংক]* - যেকোনো বড় লিংক শর্ট করতে।\n`
-               + `📧 */mail* - নতুন টেম্পোরারি (ফেক) ইমেইল পেতে।\n`
-               + `#️⃣ */tags [বিষয়]* - পোস্টের জন্য ভাইরাল হ্যাশট্যাগ পেতে।`;
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...getBackButton() }).catch(()=>{});
-    ctx.answerCbQuery();
-});
-
-bot.action('menu_help', async (ctx) => {
-    const text = `💡 *SMART ENTRY GUIDE*\n━━━━━━━━━━━━━━━━━━━━━━\n`
-               + `চ্যাটে সরাসরি নিচের মতো করে লিখুন:\n\n`
-               + `✅ *আয় যুক্ত করতে:*\n`
-               + `\`আয় 500 bkash টিউশনি\`\n\n`
-               + `❌ *খরচ যুক্ত করতে:*\n`
-               + `\`খরচ 200 nagad ইন্টারনেট বিল\``;
-    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...getBackButton() }).catch(()=>{});
-    ctx.answerCbQuery();
-});
-
-// ==========================================
-// 💰 SMART INCOME/EXPENSE LISTENER
-// ==========================================
-bot.hears(/^(আয়|আয়|খরচ|ব্যয়|ব্যয়)\s+(\d+)\s+(bkash|nagad|rocket|bank|cash|usd)\s+(.+)$/i, async (ctx) => {
-    const match = ctx.match;
-    const type = (match[1] === 'খরচ' || match[1] === 'ব্যয়' || match[1] === 'ব্যয়') ? 'expense' : 'income';
-    const amount = parseInt(match[2]);
-    const method = match[3].toLowerCase();
-    const note = match[4];
-
-    const user = await getUserData(ctx.from.id);
-
-    if (type === 'expense' && user.balances[method] < amount) {
-        return ctx.reply(`⚠️ আপনার ${method.toUpperCase()} অ্যাকাউন্টে পর্যাপ্ত ব্যালেন্স নেই!`);
+function sendNumberMenu(ctx, prefix) {
+    const text = `📱 *NUMBER GENERATOR*\n━━━━━━━━━━━━━━━\n🎯 *Current Target Range:* \`${prefix}XXX\`\n\nClick below to get a number:`;
+    const buttons = Markup.inlineKeyboard([
+        [Markup.button.callback('📲 Get Number Now', 'get_new_number')],
+        [Markup.button.callback('⚙️ Set Another Prefix', 'set_prefix')]
+    ]);
+    if (ctx.updateType === 'callback_query') {
+        ctx.editMessageText(text, { parse_mode: 'Markdown', ...buttons }).catch(()=>{});
+    } else {
+        ctx.reply(text, { parse_mode: 'Markdown', ...buttons });
     }
+}
 
-    if (type === 'income') user.balances[method] += amount;
-    else user.balances[method] -= amount;
+// ==========================================
+// 📲 FETCH NUMBER FROM API
+// ==========================================
+bot.action('get_new_number', async (ctx) => {
+    const user = await getUser(ctx.from.id);
+    await ctx.editMessageText('⏳ Allocating a number for you...', { parse_mode: 'Markdown' }).catch(()=>{});
 
-    user.transactions.push({
-        type: type, amount: amount, method: method, note: note, date: new Date().toISOString()
-    });
-
-    await updateUserData(ctx.from.id, { balances: user.balances, transactions: user.transactions });
-
-    const text = `✅ *${type === 'income' ? 'INCOME' : 'EXPENSE'} ADDED!*\n`
-               + `💰 পরিমাণ: ${amount} ${method === 'usd' ? '$' : '৳'}\n`
-               + `💳 মাধ্যম: ${method.toUpperCase()}\n`
-               + `📝 নোট: ${note}`;
-               
-    // নোটিফিকেশন দেওয়ার পর নতুন করে ড্যাশবোর্ড মেনু পাঠিয়ে দেবে
-    ctx.reply(text, { parse_mode: 'Markdown' }).then(() => {
-        generateDashboardText(ctx.from.id).then(dashText => {
-            ctx.reply(dashText, { parse_mode: 'Markdown', ...getMainMenuKeyboard() });
+    try {
+        const res = await fetch(`${STEX_BASE_URL}/getnum`, {
+            method: 'POST',
+            headers: STEX_HEADERS,
+            body: JSON.stringify({ rid: user.current_prefix })
         });
-    });
+        const json = await res.json();
+
+        if (json.meta.code === 200 && json.data.no_plus_number) {
+            const num = json.data.no_plus_number;
+            const fullNum = json.data.full_number;
+            const operator = json.data.operator || 'Unknown';
+            
+            const text = `✅ *Number Allocated!*\n━━━━━━━━━━━━━━━\n`
+                       + `📞 *Number:* \`${fullNum}\`\n`
+                       + `📡 *Network:* ${operator}\n`
+                       + `🎯 *Range:* ${user.current_prefix}XXX\n\n`
+                       + `_Waiting for SMS... Click the Check OTP button below._`;
+
+            const buttons = Markup.inlineKeyboard([
+                [Markup.button.callback('🔄 Check OTP', `chk_${num}`)],
+                [Markup.button.callback('🔄 Change Number (Same Range)', 'get_new_number')],
+                [Markup.button.callback('🔙 Back to Menu', 'back_menu')]
+            ]);
+            
+            await ctx.editMessageText(text, { parse_mode: 'Markdown', ...buttons }).catch(()=>{});
+        } else {
+            await ctx.editMessageText(`❌ *Stock Unavailable*\nNo numbers left in ${user.current_prefix}XXX range right now.`, {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([[Markup.button.callback('⚙️ Set Another Prefix', 'set_prefix')]])
+            }).catch(()=>{});
+        }
+    } catch (e) {
+        await ctx.editMessageText('❌ API Error! Try again later.').catch(()=>{});
+    }
 });
 
 // ==========================================
-// ➕ ADD LOAN COMMAND & OTHERS
+// 🔄 CHECK OTP & FORWARD TO CHANNEL
 // ==========================================
-bot.command('addloan', async (ctx) => {
-    const args = ctx.message.text.split(' ');
-    if (args.length < 5) return ctx.reply('❌ সঠিক নিয়ম: `/addloan [নাম] [মোট টাকা] [কত শোধ করেছেন] [কিস্তির তারিখ]`', { parse_mode: 'Markdown' });
-
-    const user = await getUserData(ctx.from.id);
-    user.loans.push({ name: args[1], amount: parseInt(args[2]), paid: parseInt(args[3]), date: args[4] });
-
-    await updateUserData(ctx.from.id, { loans: user.loans });
-    ctx.reply(`✅ *${args[1]}* লোনটি সফলভাবে যুক্ত হয়েছে!`, { parse_mode: 'Markdown', ...getBackButton() });
-});
-
-bot.command('short', async (ctx) => {
-    const text = ctx.message.text.split(' ');
-    if (text.length < 2) return ctx.reply('❌ *সঠিক নিয়ম:* `/short আপনার_লিংক`', { parse_mode: 'Markdown' });
+bot.action(/chk_(.+)/, async (ctx) => {
+    const targetNumber = ctx.match[1];
+    
     try {
-        const res = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(text[1])}`);
-        const shortUrl = await res.text();
-        ctx.reply(`✅ *আপনার শর্ট লিংক:*\n🔗 ${shortUrl}`, { parse_mode: 'Markdown' });
-    } catch (e) { ctx.reply('❌ সমস্যা হয়েছে!'); }
+        const res = await fetch(`${STEX_BASE_URL}/success-otp`, { headers: STEX_HEADERS });
+        const json = await res.json();
+        
+        if (json.meta.code === 200 && json.data.otps) {
+            // ওই স্পেসিফিক নাম্বারের কোনো OTP আছে কি না খোঁজা
+            const foundOtp = json.data.otps.find(otp => otp.number === targetNumber);
+            
+            if (foundOtp) {
+                // ১. ইউজারকে কোড দেওয়া
+                const text = `🎉 *OTP RECEIVED SUCCESSFULLY!*\n━━━━━━━━━━━━━━━\n`
+                           + `📞 *Number:* \`+${foundOtp.number}\`\n`
+                           + `💬 *Message:* \`${foundOtp.message}\``;
+                
+                const buttons = Markup.inlineKeyboard([
+                    [Markup.button.callback('🔄 Get Another Number', 'get_new_number')],
+                    [Markup.button.callback('🔙 Back to Menu', 'back_menu')]
+                ]);
+                await ctx.editMessageText(text, { parse_mode: 'Markdown', ...buttons }).catch(()=>{});
+
+                // ২. ডাটাবেসে OTP কাউন্ট বাড়ানো
+                const user = await getUser(ctx.from.id);
+                await updateUser(ctx.from.id, { total_otps: user.total_otps + 1 });
+
+                // ৩. চ্যানেলে ফরোয়ার্ড করা
+                const channelMsg = `🔥 *NEW SUCCESSFUL OTP* 🔥\n\n`
+                                 + `👤 By: ${ctx.from.first_name}\n`
+                                 + `📞 Number: +${foundOtp.number}\n`
+                                 + `💬 Code: ${foundOtp.message}`;
+                await bot.telegram.sendMessage(CHANNEL_ID, channelMsg).catch(()=> console.log('Channel forward failed'));
+
+                return ctx.answerCbQuery('✅ OTP Found!');
+            }
+        }
+        ctx.answerCbQuery('⏳ Still waiting for OTP... Please click Check again in a few seconds.', { show_alert: true });
+    } catch (e) {
+        ctx.answerCbQuery('❌ Error connecting to server.');
+    }
 });
 
-bot.command('mail', async (ctx) => {
-    try {
-        const res = await fetch('https://www.1secmail.com/api/v1/?action=genRandomMailbox&count=1');
-        const data = await res.json();
-        const email = data[0];
-        const [login, domain] = email.split('@');
-        ctx.reply(`📧 *টেম্পোরারি ইমেইল:*\n👉 \`${email}\`\n\n📥 [ইনবক্স চেক করুন](https://www.1secmail.com/mailbox/?email=${login}&domain=${domain})`, { parse_mode: 'Markdown', disable_web_page_preview: true });
-    } catch (e) { ctx.reply('❌ সার্ভার সমস্যা!'); }
-});
-
-bot.command('tags', (ctx) => {
-    const keyword = ctx.message.text.replace('/tags', '').trim().replace(/\s+/g, '');
-    if (!keyword) return ctx.reply('❌ সঠিক নিয়ম: `/tags fashion`', { parse_mode: 'Markdown' });
-    ctx.reply(`🔥 *হ্যাশট্যাগ:*\n\`#${keyword} #${keyword}lovers #viral #trending #fyp\``, { parse_mode: 'Markdown' });
+bot.action('back_menu', async (ctx) => {
+    const user = await getUser(ctx.from.id);
+    sendNumberMenu(ctx, user.current_prefix);
 });
 
 // ==========================================
-// 🔥 VERCEL SERVER HANDLER 🔥
+// 🔥 VERCEL HANDLER
 // ==========================================
 module.exports = async function handler(req, res) {
     if (req.method === 'POST') {
-        try { await bot.handleUpdate(req.body); res.status(200).send('OK'); } 
-        catch (error) { res.status(500).send('Error'); }
-    } else { res.status(200).send('PRO Finance Bot Live!'); }
+        try { 
+            await bot.handleUpdate(req.body); 
+            res.status(200).send('OK'); 
+        } catch (error) { res.status(500).send('Error'); }
+    } else { res.status(200).send('STEX OTP Bot Live!'); }
 };
