@@ -1,264 +1,250 @@
-const { Telegraf, Markup } = require('telegraf');
-const { createClient } = require('@supabase/supabase-js');
+let initError = null;
+let bot;
 
-// ==========================================
-// 🔑 ALL API KEYS & CONFIGURATIONS
-// ==========================================
-const BOT_TOKEN = '8571540558:AAHv9KuMbl-Ct-yWZNJKXUxBCqdNHKSBPlA';
-const ADMIN_ID = '5968392734';
-const CHANNEL_ID = '@siyamXotp'; 
+try {
+    const { Telegraf, Markup } = require('telegraf');
+    const { createClient } = require('@supabase/supabase-js');
 
-const SUPABASE_URL = 'https://ocrhnssxamusvlnkvzwn.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_3pT3XXRD3kvRq2b5vZZjeA_JRsTQhOg';
+    const BOT_TOKEN = '8571540558:AAHv9KuMbl-Ct-yWZNJKXUxBCqdNHKSBPlA';
+    const ADMIN_ID = '5968392734';
+    const CHANNEL_ID = '@siyamXotp';
 
-const STEX_API_KEY = 'M704VEUDSZ3';
-const STEX_BASE_URL = 'https://api.2oo9.cloud/MXS47FLFX0U/tness/@public/api';
+    const SUPABASE_URL = 'https://ocrhnssxamusvlnkvzwn.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_3pT3XXRD3kvRq2b5vZZjeA_JRsTQhOg';
 
-const bot = new Telegraf(BOT_TOKEN);
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    const STEX_API_KEY = 'M704VEUDSZ3';
+    const STEX_BASE_URL = 'https://api.2oo9.cloud/MXS47FLFX0U/tness/@public/api';
 
-const STEX_HEADERS = { 'mauthapi': STEX_API_KEY, 'Content-Type': 'application/json' };
+    bot = new Telegraf(BOT_TOKEN);
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    const STEX_HEADERS = { 'mauthapi': STEX_API_KEY, 'Content-Type': 'application/json' };
 
-// ==========================================
-// 🗄️ DATABASE HELPERS
-// ==========================================
-async function getUser(userId, username) {
-    let { data } = await supabase.from('stex_users').select('*').eq('user_id', userId.toString()).single();
-    if (!data) {
-        data = { user_id: userId.toString(), username: username || 'User', current_prefix: null, status: 'idle', total_otps: 0 };
-        await supabase.from('stex_users').insert([data]);
-    }
-    return data;
-}
-
-async function updateUser(userId, updates) {
-    await supabase.from('stex_users').update(updates).eq('user_id', userId.toString());
-}
-
-// ==========================================
-// 📱 BOTTOM KEYBOARD (MAIN MENU)
-// ==========================================
-const mainMenu = Markup.keyboard([
-    ['📱 Get Number', '🌐 Live Traffic'],
-    ['👤 My Profile', '💳 Balance & Withdraw']
-]).resize();
-
-// ==========================================
-// 🚀 BOT START & CORE COMMANDS
-// ==========================================
-bot.command('start', async (ctx) => {
-    await getUser(ctx.from.id, ctx.from.first_name);
-    const welcomeMsg = `🌟 *Welcome to Premium OTP Bot!* 🌟\n\n`
-                     + `⚡ Superfast, Reliable & High Access OTP service.\n`
-                     + `Select an option from the menu below to get started.`;
-    ctx.reply(welcomeMsg, { parse_mode: 'Markdown', ...mainMenu });
-});
-
-bot.hears('💳 Balance & Withdraw', (ctx) => {
-    ctx.reply('⏳ *Balance & Withdraw option is Coming Soon...*', { parse_mode: 'Markdown' });
-});
-
-bot.hears('👤 My Profile', async (ctx) => {
-    const user = await getUser(ctx.from.id);
-    const msg = `👤 *User Profile*\n━━━━━━━━━━━━━━━\n`
-              + `🆔 *ID:* \`${user.user_id}\`\n`
-              + `🔢 *Saved Prefix:* ${user.current_prefix ? user.current_prefix + 'XXX' : 'Not Set'}\n`
-              + `✅ *Total OTPs:* ${user.total_otps}`;
-    ctx.reply(msg, { parse_mode: 'Markdown' });
-});
-
-// ==========================================
-// 👑 SECURE ADMIN COMMANDS
-// ==========================================
-bot.command('stats', async (ctx) => {
-    if (ctx.from.id.toString() !== ADMIN_ID) return;
-    const { count } = await supabase.from('stex_users').select('*', { count: 'exact', head: true });
-    const { data } = await supabase.from('stex_users').select('total_otps');
-    const totalOtps = data.reduce((sum, u) => sum + u.total_otps, 0);
-    ctx.reply(`👑 *ADMIN DASHBOARD*\n━━━━━━━━━━━━━━━\n👥 Total Users: ${count}\n✅ Total Global OTPs: ${totalOtps}`, { parse_mode: 'Markdown' });
-});
-
-bot.command('userinfo', async (ctx) => {
-    if (ctx.from.id.toString() !== ADMIN_ID) return;
-    const targetId = ctx.message.text.split(' ')[1];
-    if (!targetId) return ctx.reply('⚠️ Use format: `/userinfo UserID`', { parse_mode: 'Markdown' });
-    
-    let { data } = await supabase.from('stex_users').select('*').eq('user_id', targetId).single();
-    if (!data) return ctx.reply('❌ User not found in database.');
-    ctx.reply(`👤 *Target User Info*\nName: ${data.username}\nPrefix: ${data.current_prefix}\nOTPs Taken: ${data.total_otps}`, { parse_mode: 'Markdown' });
-});
-
-// ==========================================
-// 🌐 LIVE TRAFFIC (CONSOLE)
-// ==========================================
-bot.hears('🌐 Live Traffic', async (ctx) => {
-    const msg = await ctx.reply('⏳ Fetching live global traffic...');
-    try {
-        const res = await fetch(`${STEX_BASE_URL}/console`, { headers: STEX_HEADERS });
-        const json = await res.json();
-        
-        if (json.meta.code === 200 && json.data.hits.length > 0) {
-            let text = `📊 *LIVE GLOBAL TRAFFIC (Last 15m)*\n━━━━━━━━━━━━━━━━━━━━\n`;
-            json.data.hits.slice(0, 8).forEach(hit => {
-                text += `📲 *${hit.sid}* | Range: \`${hit.range}\`\n💬 ${hit.message.substring(0, 20)}...\n\n`;
-            });
-            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, text, { parse_mode: 'Markdown' });
-        } else {
-            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📭 No live traffic found right now.');
+    // ==========================================
+    // 🗄️ DATABASE HELPERS
+    // ==========================================
+    async function getUser(userId, username) {
+        let { data } = await supabase.from('stex_users').select('*').eq('user_id', userId.toString()).single();
+        if (!data) {
+            data = { user_id: userId.toString(), username: username || 'User', current_prefix: null, status: 'idle', total_otps: 0 };
+            await supabase.from('stex_users').insert([data]);
         }
-    } catch (e) {
-        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '❌ Failed to connect to server.');
+        return data;
     }
-});
 
-// ==========================================
-// 📱 GET NUMBER & PREFIX LOGIC
-// ==========================================
-bot.hears('📱 Get Number', async (ctx) => {
-    const user = await getUser(ctx.from.id);
-    if (!user.current_prefix) {
+    async function updateUser(userId, updates) {
+        await supabase.from('stex_users').update(updates).eq('user_id', userId.toString());
+    }
+
+    // ==========================================
+    // 📱 BOTTOM KEYBOARD
+    // ==========================================
+    const mainMenu = Markup.keyboard([
+        ['📱 Get Number', '🌐 Live Traffic'],
+        ['👤 My Profile', '💳 Balance & Withdraw']
+    ]).resize();
+
+    // ==========================================
+    // 🚀 BOT START & COMMANDS
+    // ==========================================
+    bot.command('start', async (ctx) => {
+        await getUser(ctx.from.id, ctx.from.first_name);
+        const welcomeMsg = `🌟 *Welcome to Premium OTP Bot!* 🌟\n\n`
+                         + `⚡ Superfast, Reliable & High Access OTP service.\n`
+                         + `Select an option from the menu below to get started.`;
+        ctx.reply(welcomeMsg, { parse_mode: 'Markdown', ...mainMenu });
+    });
+
+    bot.hears('💳 Balance & Withdraw', (ctx) => {
+        ctx.reply('⏳ *Balance & Withdraw option is Coming Soon...*', { parse_mode: 'Markdown' });
+    });
+
+    bot.hears('👤 My Profile', async (ctx) => {
+        const user = await getUser(ctx.from.id);
+        const msg = `👤 *User Profile*\n━━━━━━━━━━━━━━━\n`
+                  + `🆔 *ID:* \`${user.user_id}\`\n`
+                  + `🔢 *Saved Prefix:* ${user.current_prefix ? user.current_prefix + 'XXX' : 'Not Set'}\n`
+                  + `✅ *Total OTPs:* ${user.total_otps}`;
+        ctx.reply(msg, { parse_mode: 'Markdown' });
+    });
+
+    bot.command('stats', async (ctx) => {
+        if (ctx.from.id.toString() !== ADMIN_ID) return;
+        const { count } = await supabase.from('stex_users').select('*', { count: 'exact', head: true });
+        const { data } = await supabase.from('stex_users').select('total_otps');
+        const totalOtps = data ? data.reduce((sum, u) => sum + u.total_otps, 0) : 0;
+        ctx.reply(`👑 *ADMIN DASHBOARD*\n━━━━━━━━━━━━━━━\n👥 Total Users: ${count}\n✅ Total Global OTPs: ${totalOtps}`, { parse_mode: 'Markdown' });
+    });
+
+    bot.command('userinfo', async (ctx) => {
+        if (ctx.from.id.toString() !== ADMIN_ID) return;
+        const targetId = ctx.message.text.split(' ')[1];
+        if (!targetId) return ctx.reply('⚠️ Use format: `/userinfo UserID`', { parse_mode: 'Markdown' });
+        
+        let { data } = await supabase.from('stex_users').select('*').eq('user_id', targetId).single();
+        if (!data) return ctx.reply('❌ User not found in database.');
+        ctx.reply(`👤 *Target User Info*\nName: ${data.username}\nPrefix: ${data.current_prefix}\nOTPs Taken: ${data.total_otps}`, { parse_mode: 'Markdown' });
+    });
+
+    bot.hears('🌐 Live Traffic', async (ctx) => {
+        const msg = await ctx.reply('⏳ Fetching live global traffic...');
+        try {
+            const res = await fetch(`${STEX_BASE_URL}/console`, { headers: STEX_HEADERS });
+            const json = await res.json();
+            
+            if (json.meta.code === 200 && json.data.hits.length > 0) {
+                let text = `📊 *LIVE GLOBAL TRAFFIC (Last 15m)*\n━━━━━━━━━━━━━━━━━━━━\n`;
+                json.data.hits.slice(0, 8).forEach(hit => {
+                    text += `📲 *${hit.sid}* | Range: \`${hit.range}\`\n💬 ${hit.message.substring(0, 20)}...\n\n`;
+                });
+                await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, text, { parse_mode: 'Markdown' });
+            } else {
+                await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📭 No live traffic found right now.');
+            }
+        } catch (e) {
+            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '❌ Failed to connect to server.');
+        }
+    });
+
+    bot.hears('📱 Get Number', async (ctx) => {
+        const user = await getUser(ctx.from.id);
+        if (!user.current_prefix) {
+            await updateUser(ctx.from.id, { status: 'waiting_prefix' });
+            return ctx.reply('⚙️ *No Prefix Set!*\n\nPlease send the prefix range you want to use.\n*(Example: 236723XXX or 236723)*', { parse_mode: 'Markdown' });
+        }
+        sendNumberMenu(ctx, user.current_prefix);
+    });
+
+    bot.action('set_prefix', async (ctx) => {
         await updateUser(ctx.from.id, { status: 'waiting_prefix' });
-        return ctx.reply('⚙️ *No Prefix Set!*\n\nPlease send the prefix range you want to use.\n*(Example: 236723XXX or 236723)*', { parse_mode: 'Markdown' });
-    }
-    sendNumberMenu(ctx, user.current_prefix);
-});
+        await ctx.editMessageText('⚙️ *Enter New Prefix Range*\n\nSend the numbers (e.g. 236723XXX) in the chat:', { parse_mode: 'Markdown' }).catch(()=>{});
+    });
 
-bot.action('set_prefix', async (ctx) => {
-    await updateUser(ctx.from.id, { status: 'waiting_prefix' });
-    await ctx.editMessageText('⚙️ *Enter New Prefix Range*\n\nSend the numbers (e.g. 236723XXX) in the chat:', { parse_mode: 'Markdown' }).catch(()=>{});
-});
-
-bot.on('text', async (ctx, next) => {
-    const user = await getUser(ctx.from.id);
-    if (user.status === 'waiting_prefix') {
-        // XXX বাদ দিয়ে শুধু নাম্বার ফিল্টার করা
-        const prefix = ctx.message.text.replace(/[^0-9]/g, ''); 
-        if (prefix.length < 3) return ctx.reply('❌ Invalid prefix! Try again.');
-        
-        await updateUser(ctx.from.id, { current_prefix: prefix, status: 'idle' });
-        ctx.reply(`✅ *Prefix successfully set to:* \`${prefix}XXX\``, { parse_mode: 'Markdown' });
-        sendNumberMenu(ctx, prefix);
-    } else {
-        return next();
-    }
-});
-
-function sendNumberMenu(ctx, prefix) {
-    const text = `📱 *NUMBER GENERATOR*\n━━━━━━━━━━━━━━━\n🎯 *Current Target Range:* \`${prefix}XXX\`\n\nClick below to get a number:`;
-    const buttons = Markup.inlineKeyboard([
-        [Markup.button.callback('📲 Get Number Now', 'get_new_number')],
-        [Markup.button.callback('⚙️ Set Another Prefix', 'set_prefix')]
-    ]);
-    if (ctx.updateType === 'callback_query') {
-        ctx.editMessageText(text, { parse_mode: 'Markdown', ...buttons }).catch(()=>{});
-    } else {
-        ctx.reply(text, { parse_mode: 'Markdown', ...buttons });
-    }
-}
-
-// ==========================================
-// 📲 FETCH NUMBER FROM API
-// ==========================================
-bot.action('get_new_number', async (ctx) => {
-    const user = await getUser(ctx.from.id);
-    await ctx.editMessageText('⏳ Allocating a number for you...', { parse_mode: 'Markdown' }).catch(()=>{});
-
-    try {
-        const res = await fetch(`${STEX_BASE_URL}/getnum`, {
-            method: 'POST',
-            headers: STEX_HEADERS,
-            body: JSON.stringify({ rid: user.current_prefix })
-        });
-        const json = await res.json();
-
-        if (json.meta.code === 200 && json.data.no_plus_number) {
-            const num = json.data.no_plus_number;
-            const fullNum = json.data.full_number;
-            const operator = json.data.operator || 'Unknown';
+    bot.on('text', async (ctx, next) => {
+        const user = await getUser(ctx.from.id);
+        if (user.status === 'waiting_prefix') {
+            const prefix = ctx.message.text.replace(/[^0-9]/g, ''); 
+            if (prefix.length < 3) return ctx.reply('❌ Invalid prefix! Try again.');
             
-            const text = `✅ *Number Allocated!*\n━━━━━━━━━━━━━━━\n`
-                       + `📞 *Number:* \`${fullNum}\`\n`
-                       + `📡 *Network:* ${operator}\n`
-                       + `🎯 *Range:* ${user.current_prefix}XXX\n\n`
-                       + `_Waiting for SMS... Click the Check OTP button below._`;
-
-            const buttons = Markup.inlineKeyboard([
-                [Markup.button.callback('🔄 Check OTP', `chk_${num}`)],
-                [Markup.button.callback('🔄 Change Number (Same Range)', 'get_new_number')],
-                [Markup.button.callback('🔙 Back to Menu', 'back_menu')]
-            ]);
-            
-            await ctx.editMessageText(text, { parse_mode: 'Markdown', ...buttons }).catch(()=>{});
+            await updateUser(ctx.from.id, { current_prefix: prefix, status: 'idle' });
+            ctx.reply(`✅ *Prefix successfully set to:* \`${prefix}XXX\``, { parse_mode: 'Markdown' });
+            sendNumberMenu(ctx, prefix);
         } else {
-            await ctx.editMessageText(`❌ *Stock Unavailable*\nNo numbers left in ${user.current_prefix}XXX range right now.`, {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([[Markup.button.callback('⚙️ Set Another Prefix', 'set_prefix')]])
-            }).catch(()=>{});
+            return next();
         }
-    } catch (e) {
-        await ctx.editMessageText('❌ API Error! Try again later.').catch(()=>{});
-    }
-});
+    });
 
-// ==========================================
-// 🔄 CHECK OTP & FORWARD TO CHANNEL
-// ==========================================
-bot.action(/chk_(.+)/, async (ctx) => {
-    const targetNumber = ctx.match[1];
-    
-    try {
-        const res = await fetch(`${STEX_BASE_URL}/success-otp`, { headers: STEX_HEADERS });
-        const json = await res.json();
-        
-        if (json.meta.code === 200 && json.data.otps) {
-            // ওই স্পেসিফিক নাম্বারের কোনো OTP আছে কি না খোঁজা
-            const foundOtp = json.data.otps.find(otp => otp.number === targetNumber);
-            
-            if (foundOtp) {
-                // ১. ইউজারকে কোড দেওয়া
-                const text = `🎉 *OTP RECEIVED SUCCESSFULLY!*\n━━━━━━━━━━━━━━━\n`
-                           + `📞 *Number:* \`+${foundOtp.number}\`\n`
-                           + `💬 *Message:* \`${foundOtp.message}\``;
+    function sendNumberMenu(ctx, prefix) {
+        const text = `📱 *NUMBER GENERATOR*\n━━━━━━━━━━━━━━━\n🎯 *Current Target Range:* \`${prefix}XXX\`\n\nClick below to get a number:`;
+        const buttons = Markup.inlineKeyboard([
+            [Markup.button.callback('📲 Get Number Now', 'get_new_number')],
+            [Markup.button.callback('⚙️ Set Another Prefix', 'set_prefix')]
+        ]);
+        if (ctx.updateType === 'callback_query') {
+            ctx.editMessageText(text, { parse_mode: 'Markdown', ...buttons }).catch(()=>{});
+        } else {
+            ctx.reply(text, { parse_mode: 'Markdown', ...buttons });
+        }
+    }
+
+    bot.action('get_new_number', async (ctx) => {
+        const user = await getUser(ctx.from.id);
+        await ctx.editMessageText('⏳ Allocating a number for you...', { parse_mode: 'Markdown' }).catch(()=>{});
+
+        try {
+            const res = await fetch(`${STEX_BASE_URL}/getnum`, {
+                method: 'POST',
+                headers: STEX_HEADERS,
+                body: JSON.stringify({ rid: user.current_prefix })
+            });
+            const json = await res.json();
+
+            if (json.meta.code === 200 && json.data.no_plus_number) {
+                const num = json.data.no_plus_number;
+                const fullNum = json.data.full_number;
+                const operator = json.data.operator || 'Unknown';
                 
+                const text = `✅ *Number Allocated!*\n━━━━━━━━━━━━━━━\n`
+                           + `📞 *Number:* \`${fullNum}\`\n`
+                           + `📡 *Network:* ${operator}\n`
+                           + `🎯 *Range:* ${user.current_prefix}XXX\n\n`
+                           + `_Waiting for SMS... Click the Check OTP button below._`;
+
                 const buttons = Markup.inlineKeyboard([
-                    [Markup.button.callback('🔄 Get Another Number', 'get_new_number')],
+                    [Markup.button.callback('🔄 Check OTP', `chk_${num}`)],
+                    [Markup.button.callback('🔄 Change Number (Same Range)', 'get_new_number')],
                     [Markup.button.callback('🔙 Back to Menu', 'back_menu')]
                 ]);
+                
                 await ctx.editMessageText(text, { parse_mode: 'Markdown', ...buttons }).catch(()=>{});
-
-                // ২. ডাটাবেসে OTP কাউন্ট বাড়ানো
-                const user = await getUser(ctx.from.id);
-                await updateUser(ctx.from.id, { total_otps: user.total_otps + 1 });
-
-                // ৩. চ্যানেলে ফরোয়ার্ড করা
-                const channelMsg = `🔥 *NEW SUCCESSFUL OTP* 🔥\n\n`
-                                 + `👤 By: ${ctx.from.first_name}\n`
-                                 + `📞 Number: +${foundOtp.number}\n`
-                                 + `💬 Code: ${foundOtp.message}`;
-                await bot.telegram.sendMessage(CHANNEL_ID, channelMsg).catch(()=> console.log('Channel forward failed'));
-
-                return ctx.answerCbQuery('✅ OTP Found!');
+            } else {
+                await ctx.editMessageText(`❌ *Stock Unavailable*\nNo numbers left in ${user.current_prefix}XXX range right now.`, {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([[Markup.button.callback('⚙️ Set Another Prefix', 'set_prefix')]])
+                }).catch(()=>{});
             }
+        } catch (e) {
+            await ctx.editMessageText('❌ API Error! Try again later.').catch(()=>{});
         }
-        ctx.answerCbQuery('⏳ Still waiting for OTP... Please click Check again in a few seconds.', { show_alert: true });
-    } catch (e) {
-        ctx.answerCbQuery('❌ Error connecting to server.');
-    }
-});
+    });
 
-bot.action('back_menu', async (ctx) => {
-    const user = await getUser(ctx.from.id);
-    sendNumberMenu(ctx, user.current_prefix);
-});
+    bot.action(/chk_(.+)/, async (ctx) => {
+        const targetNumber = ctx.match[1];
+        try {
+            const res = await fetch(`${STEX_BASE_URL}/success-otp`, { headers: STEX_HEADERS });
+            const json = await res.json();
+            
+            if (json.meta.code === 200 && json.data.otps) {
+                const foundOtp = json.data.otps.find(otp => otp.number === targetNumber);
+                if (foundOtp) {
+                    const text = `🎉 *OTP RECEIVED SUCCESSFULLY!*\n━━━━━━━━━━━━━━━\n`
+                               + `📞 *Number:* \`+${foundOtp.number}\`\n`
+                               + `💬 *Message:* \`${foundOtp.message}\``;
+                    
+                    const buttons = Markup.inlineKeyboard([
+                        [Markup.button.callback('🔄 Get Another Number', 'get_new_number')],
+                        [Markup.button.callback('🔙 Back to Menu', 'back_menu')]
+                    ]);
+                    await ctx.editMessageText(text, { parse_mode: 'Markdown', ...buttons }).catch(()=>{});
+
+                    const user = await getUser(ctx.from.id);
+                    await updateUser(ctx.from.id, { total_otps: user.total_otps + 1 });
+
+                    const channelMsg = `🔥 *NEW SUCCESSFUL OTP* 🔥\n\n👤 By: ${ctx.from.first_name}\n📞 Number: +${foundOtp.number}\n💬 Code: ${foundOtp.message}`;
+                    await bot.telegram.sendMessage(CHANNEL_ID, channelMsg).catch(()=> {});
+
+                    return ctx.answerCbQuery('✅ OTP Found!');
+                }
+            }
+            ctx.answerCbQuery('⏳ Still waiting for OTP... Please click Check again in a few seconds.', { show_alert: true });
+        } catch (e) {
+            ctx.answerCbQuery('❌ Error connecting to server.');
+        }
+    });
+
+    bot.action('back_menu', async (ctx) => {
+        const user = await getUser(ctx.from.id);
+        sendNumberMenu(ctx, user.current_prefix);
+    });
+
+} catch (err) {
+    initError = err.toString();
+}
 
 // ==========================================
-// 🔥 VERCEL HANDLER
+// 🔥 VERCEL HANDLER (ERROR CATCHER)
 // ==========================================
 module.exports = async function handler(req, res) {
+    // যদি প্যাকেজ না থাকে বা কোনো এরর হয়, তবে সেটি স্ক্রিনে দেখাবে
+    if (initError) {
+        return res.status(200).send(`🚨 VERCEL CRASH DETECTED 🚨\n\nReason: ${initError}\n\n👉 FIX 1: Make sure your 'package.json' is in the main/root folder, NOT inside the 'api' folder.\n👉 FIX 2: Go to Vercel Settings > General > Node.js Version and change it to 18.x or 20.x.`);
+    }
+
     if (req.method === 'POST') {
         try { 
             await bot.handleUpdate(req.body); 
             res.status(200).send('OK'); 
         } catch (error) { res.status(500).send('Error'); }
-    } else { res.status(200).send('STEX OTP Bot Live!'); }
+    } else { 
+        res.status(200).send('✅ STEX OTP Bot is 100% Live & Error Free!'); 
+    }
 };
